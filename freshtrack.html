@@ -2960,6 +2960,27 @@ function renderUtang(el,actions){
       </table>
     </div>
   </div>
+  ${(()=>{
+    const allDeds=DB.payments.filter(p=>p.deductions&&p.deductions.length);
+    const totalDedLoss=DB.payments.reduce((s,p)=>s+(+p.totalDeductions||0),0);
+    if(!allDeds.length)return'';
+    const byReason={};
+    DB.payments.forEach(p=>(p.deductions||[]).forEach(d=>{byReason[d.reason]=(byReason[d.reason]||0)+d.amount;}));
+    return`<div class="card mt-4" style="border-left:4px solid var(--danger)">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">✂️ Deductions Summary</span>
+        <span style="font-weight:700;color:var(--danger);font-size:15px">Total Lost: ${fmt(totalDedLoss)}</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Reason</th><th>Total Deducted</th></tr></thead>
+          <tbody>${Object.entries(byReason).sort((a,b)=>b[1]-a[1]).map(([r,v])=>`
+            <tr><td>${r}</td><td class="fw-bold text-red">${fmt(v)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  })()}
   <div class="card mt-4">
     <div class="card-header"><span class="card-title">Payment History</span></div>
     <div class="table-wrap">
@@ -2967,16 +2988,21 @@ function renderUtang(el,actions){
         <thead>
           <tr>
             <th>Date</th><th>Customer</th><th>Action</th>
-            <th>Amount</th><th>Bank</th><th>Check #</th>
+            <th>Gross Amount</th><th>Deductions</th><th>Net Collected</th>
+            <th>Bank</th><th>Check #</th>
             <th>Invoice Covered</th><th>Staff</th><th>Actions</th>
           </tr>
         </thead>
-        <tbody>${DB.payments.slice().reverse().map(p=>`
-          <tr>
+        <tbody>${DB.payments.slice().reverse().map(p=>{
+          const hasDed=p.deductions&&p.deductions.length;
+          const dedTip=hasDed?p.deductions.map(d=>`${d.reason}: ${fmt(d.amount)}`).join(' | '):'';
+          return`<tr>
             <td>${fmtDate(p.date)}</td>
             <td>${customerName(p.customerId)}</td>
             <td><span class="badge ${p.action==='cash'?'badge-green':'badge-blue'}">${p.action==='cash'?'Cash':'Credit'}</span></td>
-            <td class="text-green fw-bold">${fmt(p.amount)}</td>
+            <td class="fw-bold">${fmt(p.amount)}</td>
+            <td>${hasDed?`<span class="fw-bold text-red" title="${dedTip}">-${fmt(p.totalDeductions)} ⓘ</span>`:'—'}</td>
+            <td class="text-green fw-bold">${fmt(p.netAmount??p.amount)}</td>
             <td>${p.bank||'—'}</td>
             <td>${p.checkNumber||'—'}</td>
             <td>${(Array.isArray(p.invoiceNumbers)&&p.invoiceNumbers.length?p.invoiceNumbers:p.invoiceNumber?[p.invoiceNumber]:[]).map(n=>`<span class="tag">${n}</span>`).join(' ')||'—'}</td>
@@ -2985,7 +3011,7 @@ function renderUtang(el,actions){
               <button class="btn btn-secondary btn-sm" onclick="editPayment('${p.id}')">Edit</button>
               <button class="btn btn-danger btn-sm" onclick="deletePayment('${p.id}')">Del</button>
             </td>
-          </tr>`).join('')||'<tr><td colspan="10" class="text-center" style="color:var(--text3);padding:20px">No payments yet</td></tr>'}
+          </tr>`;}).join('')||'<tr><td colspan="11" class="text-center" style="color:var(--text3);padding:20px">No payments yet</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -3044,6 +3070,20 @@ function openPaymentForm(customerId){
       </div>
       <span class="form-note">Add one row per invoice. Leave blank to skip.</span>
 
+      <hr class="divider">
+
+      <!-- Deductions -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.5px">✂️ Deductions</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="payAddDeductionRow()">+ Add Deduction</button>
+      </div>
+      <div id="pay-deduction-list"></div>
+      <span class="form-note">Enter any deductions the client made (e.g. withholding tax, damaged goods, freight). These reduce the net collection.</span>
+      <div style="margin-top:8px;font-size:13px;color:var(--text-muted)">
+        Net Collection: <strong id="pay-net-display" style="color:var(--success)">₱ 0.00</strong>
+        &nbsp;=&nbsp; Amount &minus; Deductions
+      </div>
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -3051,6 +3091,8 @@ function openPaymentForm(customerId){
     </div>
   </div>`);
   payToggleFields();
+  document.getElementById('pay-amount').addEventListener('input', updatePayNet);
+
 }
 
 function payToggleFields(){
@@ -3059,6 +3101,26 @@ function payToggleFields(){
   const checkGrp=document.getElementById('pay-check-group');
   if(bankGrp) bankGrp.style.display=isCredit?'flex':'none';
   if(checkGrp) checkGrp.style.display=isCredit?'flex':'none';
+}
+
+function updatePayNet(){
+  const amount=parseFloat(document.getElementById('pay-amount')?.value)||0;
+  const totalDed=[...document.querySelectorAll('.pay-ded-amount')].reduce((s,i)=>s+(parseFloat(i.value)||0),0);
+  const net=amount-totalDed;
+  const el=document.getElementById('pay-net-display');
+  if(el){el.textContent=`₱ ${fmtN(net)}`;el.style.color=net>=0?'var(--success)':'var(--danger)';}
+}
+
+function payAddDeductionRow(){
+  const div=document.createElement('div');
+  div.className='pay-deduction-row';
+  div.style.cssText='display:flex;gap:8px;margin-bottom:6px;align-items:center';
+  div.innerHTML=`
+    <input class="pay-ded-reason" placeholder="Reason (e.g. Withholding Tax, Damaged Goods)" style="flex:2;border:1.5px solid var(--gray-border);border-radius:var(--radius);padding:8px 10px;font-size:13px">
+    <input type="number" class="pay-ded-amount" placeholder="₱ 0.00" min="0" step="0.01" style="flex:1;border:1.5px solid var(--gray-border);border-radius:var(--radius);padding:8px 10px;font-size:13px" oninput="updatePayNet()">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="this.closest('.pay-deduction-row').remove();updatePayNet()" title="Remove">✕</button>`;
+  document.getElementById('pay-deduction-list').appendChild(div);
+  div.querySelector('input').focus();
 }
 
 function payAddInvoiceRow(){
@@ -3078,9 +3140,18 @@ async function savePayment(customerId){
   const c=DB.customers.find(x=>x.id===customerId);
   if(!c)return;
   const action=document.getElementById('pay-action').value;
-  // Collect all invoice numbers from the dynamic rows (filter out blanks)
   const invoiceNumbers=[...document.querySelectorAll('.pay-inv-input')]
     .map(i=>i.value.trim()).filter(Boolean);
+
+  // Collect deductions
+  const deductions=[...document.querySelectorAll('.pay-deduction-row')].map(row=>({
+    reason:row.querySelector('.pay-ded-reason').value.trim()||'Deduction',
+    amount:parseFloat(row.querySelector('.pay-ded-amount').value)||0
+  })).filter(d=>d.amount>0);
+  const totalDeductions=deductions.reduce((s,d)=>s+d.amount,0);
+  const netAmount=amount-totalDeductions;
+  if(netAmount<0){showToast('Deductions cannot exceed the payment amount','error');return;}
+
   const entry={
     id:genId(),
     date:document.getElementById('pay-date').value,
@@ -3088,18 +3159,23 @@ async function savePayment(customerId){
     bank:document.getElementById('pay-bank')?.value.trim()||'',
     checkNumber:document.getElementById('pay-check')?.value.trim()||'',
     invoiceNumbers,
+    deductions,
+    totalDeductions,
+    netAmount,
     staffUser:SESSION.username
   };
-  c.balance=Math.max(0,(+c.balance||0)-amount);
+  // Balance reduced by net amount (after deductions)
+  c.balance=Math.max(0,(+c.balance||0)-netAmount);
   DB.payments.push(entry);
   saveDB();
   const invLabel=invoiceNumbers.length?` | Invoices: ${invoiceNumbers.join(', ')}`:' | No invoice';
-  logActivity('Payment',`${c.name} — ${action==='cash'?'Cash':'Credit'} ${fmt(amount)}${entry.checkNumber?' | Check #'+entry.checkNumber:''}${invLabel}`);
+  const dedLabel=deductions.length?` | Deductions: ${fmt(totalDeductions)}`:'';
+  logActivity('Payment',`${c.name} — ${action==='cash'?'Cash':'Credit'} ${fmt(amount)} (Net: ${fmt(netAmount)})${entry.checkNumber?' | Check #'+entry.checkNumber:''}${invLabel}${dedLabel}`);
   await gasPost({action:'add',sheet:'Payments',data:entry});
   await gasPost({action:'updateBalance',sheet:'Customers',data:{id:customerId,balance:c.balance}});
   closeModal();
   const paidCount=invoiceNumbers.length;
-  showToast(`Payment recorded${paidCount?` — ${paidCount} invoice${paidCount>1?'s':''} marked as Paid`:''}`, 'success');
+  showToast(`Payment recorded${deductions.length?` — ${fmt(totalDeductions)} deducted`:''}${paidCount?` | ${paidCount} invoice${paidCount>1?'s':''} covered`:''}`, 'success');
   renderPage('utang');
 }
 
