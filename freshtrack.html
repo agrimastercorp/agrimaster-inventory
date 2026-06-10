@@ -711,6 +711,7 @@ const NAV = [
   {id:'assets',     label:'Assets (PP&E)', icon:'🏗️', section:'Finance',   roles:['owner']},
   {id:'loans',      label:'Loans & Liabilities', icon:'🏦', section:'Finance', roles:['owner']},
   {id:'balancesheet',label:'Balance Sheet', icon:'⚖️', section:'Finance',  roles:['owner']},
+  {id:'incomestatement',label:'Income Statement',icon:'📄',section:'Finance',roles:['owner']},
   {id:'reports',    label:'Reports Hub',   icon:'🗂️', section:'Reports',   roles:['owner'], pageId:'page_reports'},
   {id:'trends',     label:'Sales Trends',  icon:'📉', section:'Reports',   roles:['owner']},
   {id:'birreport',  label:'BIR Report',    icon:'🧾', section:'Reports',   roles:['owner']},
@@ -902,6 +903,7 @@ function renderPage(page){
     case 'assets':       renderAssets(el,actions); break;
     case 'loans':        renderLoans(el,actions); break;
     case 'balancesheet': renderBalanceSheet(el); break;
+    case 'incomestatement': renderIncomeStatement(el,actions); break;
     default: el.innerHTML='<p>Page not found.</p>';
   }
 }
@@ -4704,6 +4706,240 @@ async function deleteLoan(id){
   logActivity('Delete Loan',l?.name||id);
   showToast('Liability deleted','warning');
   renderPage('loans');
+}
+
+// ─────────────────────────────────────────────
+//  INCOME STATEMENT
+// ─────────────────────────────────────────────
+function renderIncomeStatement(el, actions){
+  const currentYear=new Date().getFullYear();
+  const years=[...new Set([
+    ...(DB.stockOut||[]).map(s=>(s.date||'').slice(0,4)),
+    ...(DB.expenses||[]).map(e=>(e.date||'').slice(0,4)),
+    ...(DB.stockIn||[]).map(s=>(s.date||'').slice(0,4)),
+  ].filter(Boolean))].sort().reverse();
+  if(!years.includes(String(currentYear)))years.unshift(String(currentYear));
+
+  const yearOpts=years.map(y=>`<option value="${y}" ${y===String(currentYear)?'selected':''}>${y}</option>`).join('');
+  const monthOpts=`<option value="all">Full Year</option>`+
+    ['January','February','March','April','May','June','July','August','September','October','November','December']
+    .map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}">${m}</option>`).join('');
+
+  actions.innerHTML=`<button class="btn btn-primary" onclick="printIncomeStatement()">🖨️ Print / Export</button>`;
+
+  el.innerHTML=`
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
+    <div class="form-group" style="margin:0">
+      <label style="font-size:12px;color:var(--text-muted)">Year</label>
+      <select id="is-year" onchange="refreshIncomeStatement()" style="min-width:100px">${yearOpts}</select>
+    </div>
+    <div class="form-group" style="margin:0">
+      <label style="font-size:12px;color:var(--text-muted)">Period</label>
+      <select id="is-month" onchange="refreshIncomeStatement()" style="min-width:140px">${monthOpts}</select>
+    </div>
+  </div>
+  <div id="is-body"></div>`;
+
+  buildIncomeStatement();
+}
+
+function refreshIncomeStatement(){buildIncomeStatement();}
+
+function buildIncomeStatement(){
+  const year=document.getElementById('is-year')?.value||String(new Date().getFullYear());
+  const month=document.getElementById('is-month')?.value||'all';
+  const body=document.getElementById('is-body');
+  if(!body)return;
+
+  function inPeriod(dateStr){
+    if(!dateStr)return false;
+    if(month==='all')return dateStr.startsWith(year);
+    return dateStr.startsWith(`${year}-${month}`);
+  }
+
+  // ── REVENUE ──
+  const salesOut=(DB.stockOut||[]).filter(s=>inPeriod(s.date));
+  const grossSales=salesOut.reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const cashSales=salesOut.filter(x=>x.paymentMethod==='cash'||x.paymentMethod==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const creditSales=salesOut.filter(x=>x.paymentMethod==='credit').reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const netSales=grossSales; // no returns tracked yet
+
+  // ── COGS ──
+  // Beginning Inventory: cost of opening stock bought BEFORE period
+  const periodStart=month==='all'?`${year}-01-01`:`${year}-${month}-01`;
+  const beginningInventory=(DB.stockIn||[])
+    .filter(s=>s.date<periodStart)
+    .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
+
+  // Purchases during period
+  const periodPurchases=(DB.stockIn||[]).filter(s=>inPeriod(s.date));
+  const totalPurchases=periodPurchases.reduce((s,b)=>s+(+b.totalCost||0),0);
+
+  // Ending Inventory: remaining value of ALL stock still on hand
+  const endingInventory=(DB.stockIn||[]).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
+
+  const cogs=salesOut.reduce((s,x)=>s+(+x.cogs||0),0);
+  const grossProfit=netSales-cogs;
+  const grossMargin=netSales?((grossProfit/netSales)*100).toFixed(1):0;
+
+  // ── OPERATING EXPENSES ──
+  const periodExpenses=(DB.expenses||[]).filter(e=>inPeriod(e.date));
+  const expByCategory={};
+  periodExpenses.forEach(e=>{
+    const cat=e.category||'General';
+    expByCategory[cat]=(expByCategory[cat]||0)+(+e.amount||0);
+  });
+  const totalOperatingExp=periodExpenses.reduce((s,e)=>s+(+e.amount||0),0);
+
+  // Spoilage loss
+  const spoilageLoss=(DB.spoilage||[]).filter(s=>inPeriod(s.date)).reduce((s,x)=>s+(+x.loss||0),0);
+
+  // Depreciation for the period
+  const today=new Date();
+  const periodMonths=month==='all'?12:1;
+  const annualDepreciation=(DB.assets||[]).reduce((a,asset)=>{
+    if(!asset.usefulLife||!asset.cost)return a;
+    const salvage=+asset.salvageValue||0;
+    const cost=+asset.cost||0;
+    const yrs=+asset.usefulLife||1;
+    return a+(cost-salvage)/yrs;
+  },0);
+  const periodDepreciation=(annualDepreciation/12)*periodMonths;
+
+  const totalOpEx=totalOperatingExp+spoilageLoss+periodDepreciation;
+  const operatingIncome=grossProfit-totalOpEx;
+
+  // ── OTHER INCOME/EXPENSES ──
+  const interestExpense=(DB.loans||[]).reduce((s,l)=>{
+    if(!l.interestRate||!l.principal)return s;
+    const annual=(+l.principal||0)*(+l.interestRate||0)/100;
+    return s+(annual/12)*periodMonths;
+  },0);
+
+  const netIncomeBeforeTax=operatingIncome-interestExpense;
+
+  // ── FORMATTING HELPERS ──
+  const periodLabel=month==='all'?`For the Year Ended December 31, ${year}`
+    :`For the Month Ended ${new Date(`${year}-${month}-01`).toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'}).replace(/^\d+\s/,'')} ${year}`;
+
+  function row(label,value,indent=0,bold=false,isSubtotal=false){
+    const pad=indent*20;
+    const neg=value<0;
+    return`<tr class="${isSubtotal?'is-subtotal':''}">
+      <td style="padding-left:${pad+12}px;${bold?'font-weight:700':''}font-size:13px">${label}</td>
+      <td style="text-align:right;padding-right:12px;font-size:13px;${bold?'font-weight:700':''}${neg?';color:var(--danger)':''}">
+        ${value!==null?`₱ ${fmtN(Math.abs(value))}${neg?' (Dr)':''}`:''}</td>
+    </tr>`;
+  }
+  function totalRow(label,value,color=''){
+    return`<tr style="background:var(--bg-secondary);border-top:2px solid var(--border)">
+      <td style="font-weight:700;padding-left:12px;font-size:13px">${label}</td>
+      <td style="text-align:right;padding-right:12px;font-weight:700;font-size:13px;${color?'color:'+color:''};border-top:2px solid var(--border)">
+        ₱ ${fmtN(value)}</td>
+    </tr>`;
+  }
+  function sectionHeader(label){
+    return`<tr><td colspan="2" style="font-weight:700;font-size:13px;padding:10px 12px 4px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);border-top:1px solid var(--border)">${label}</td></tr>`;
+  }
+  function spacer(){return`<tr><td colspan="2" style="height:8px"></td></tr>`;}
+  function divider(){return`<tr><td colspan="2"><hr style="margin:2px 12px;border-color:var(--border)"></td></tr>`;}
+
+  const expRows=Object.entries(expByCategory).sort((a,b)=>b[1]-a[1])
+    .map(([cat,amt])=>row(cat,amt,2)).join('');
+
+  body.innerHTML=`
+  <div id="is-printable" style="max-width:720px;margin:0 auto">
+    <div class="card">
+      <!-- Header -->
+      <div style="text-align:center;padding:16px 0 8px;border-bottom:2px solid var(--border);margin-bottom:4px">
+        <div style="font-weight:800;font-size:18px;letter-spacing:.3px">${DB.settings.shopName||'Agrimaster Corporation'}</div>
+        <div style="font-weight:700;font-size:15px;margin-top:4px">STATEMENT OF COMPREHENSIVE INCOME</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${periodLabel}</div>
+        <div style="font-size:11px;color:var(--text-muted)">(In Philippine Peso)</div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse">
+        <tbody>
+          <!-- REVENUE -->
+          ${sectionHeader('I. Revenue')}
+          ${row('Gross Sales',grossSales,1)}
+          ${row('Cash Sales',cashSales,2)}
+          ${row('Credit Sales',creditSales,2)}
+          ${divider()}
+          ${totalRow('Net Sales',netSales,'var(--primary)')}
+
+          <!-- COGS -->
+          ${spacer()}
+          ${sectionHeader('II. Cost of Goods Sold')}
+          ${row('Beginning Inventory',beginningInventory,1)}
+          ${row('Add: Purchases During Period',totalPurchases,1)}
+          ${row('Goods Available for Sale',beginningInventory+totalPurchases,1,true)}
+          ${row('Less: Ending Inventory',endingInventory,1)}
+          ${divider()}
+          ${totalRow('Total Cost of Goods Sold',cogs)}
+
+          <!-- GROSS PROFIT -->
+          ${spacer()}
+          ${totalRow(`Gross Profit  (${grossMargin}% margin)`,grossProfit,grossProfit>=0?'var(--success)':'var(--danger)')}
+
+          <!-- OPERATING EXPENSES -->
+          ${spacer()}
+          ${sectionHeader('III. Operating Expenses')}
+          ${expRows||row('— No expenses recorded —',null,2)}
+          ${spoilageLoss>0?row('Spoilage & Wastage Loss',spoilageLoss,2):''}
+          ${periodDepreciation>0?row('Depreciation Expense (PP&E)',periodDepreciation,2):''}
+          ${divider()}
+          ${totalRow('Total Operating Expenses',totalOpEx)}
+
+          <!-- OPERATING INCOME -->
+          ${spacer()}
+          ${totalRow('Operating Income (EBIT)',operatingIncome,operatingIncome>=0?'var(--success)':'var(--danger)')}
+
+          <!-- OTHER EXPENSES -->
+          ${interestExpense>0?`
+          ${spacer()}
+          ${sectionHeader('IV. Other Expenses')}
+          ${row('Interest Expense',interestExpense,1)}
+          ${divider()}
+          ${totalRow('Total Other Expenses',interestExpense)}
+          `:''}
+
+          <!-- NET INCOME -->
+          ${spacer()}
+          <tr style="background:${netIncomeBeforeTax>=0?'#f0fdf4':'#fef2f2'};border-top:3px double var(--border)">
+            <td style="font-weight:800;font-size:15px;padding:12px 12px">NET INCOME ${netIncomeBeforeTax<0?'(LOSS)':''}</td>
+            <td style="text-align:right;padding-right:12px;font-weight:800;font-size:15px;color:${netIncomeBeforeTax>=0?'var(--success)':'var(--danger)'};border-top:3px double var(--border)">
+              ₱ ${fmtN(Math.abs(netIncomeBeforeTax))}${netIncomeBeforeTax<0?' (Loss)':''}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:16px;padding:12px;background:var(--bg-secondary);border-radius:8px;font-size:11px;color:var(--text-muted)">
+        <strong>Notes:</strong> COGS calculated using FIFO method. Depreciation computed on straight-line basis.
+        Beginning inventory reflects estimated remaining cost value of stock prior to period.
+        Interest expense estimated from outstanding loan balances and stated interest rates.
+      </div>
+    </div>
+  </div>`;
+}
+
+function printIncomeStatement(){
+  const content=document.getElementById('is-printable');
+  if(!content)return;
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>Income Statement</title>
+  <style>
+    body{font-family:Arial,sans-serif;margin:32px;color:#111}
+    table{width:100%;border-collapse:collapse}
+    td{padding:4px 8px;font-size:12px}
+    hr{border:none;border-top:1px solid #ccc;margin:2px 0}
+    .is-subtotal td{font-style:italic;color:#555}
+  </style></head><body>
+  ${content.innerHTML}
+  <script>window.onload=function(){window.print();}<\/script>
+  </body></html>`);
+  win.document.close();
 }
 
 // ─────────────────────────────────────────────
