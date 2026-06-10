@@ -711,6 +711,7 @@ const NAV = [
   {id:'purchaseorders',label:'Purchase Orders',icon:'📋',section:'Reports',roles:['owner']},
   {id:'activitylog',label:'Activity Log',  icon:'📝', section:'Reports',   roles:['owner']},
   {id:'setup',      label:'Setup',         icon:'⚙️', section:'System',    roles:['owner']},
+  {id:'begininventory', label:'Beginning Inventory', icon:'🗃️', section:'System', roles:['owner']},
 ];
 
 let currentPage='dashboard';
@@ -891,6 +892,7 @@ function renderPage(page){
     case 'purchaseorders':renderPO(el,actions); break;
     case 'activitylog':  renderActivityLog(el); break;
     case 'setup':        renderSetup(el); if(SESSION.role==='owner'&&(DB.settings.gasUrl||BAKED_GAS_URL)){syncFromGAS().then(ok=>{if(ok)renderSetup(document.getElementById('page-content'));});} break;
+    case 'begininventory': renderBeginInventory(el,actions); break;
     default: el.innerHTML='<p>Page not found.</p>';
   }
 }
@@ -4439,6 +4441,140 @@ function renderActivityLog(el){
       </table>
     </div>
   </div>`;
+}
+
+// ─────────────────────────────────────────────
+//  BEGINNING INVENTORY
+// ─────────────────────────────────────────────
+function renderBeginInventory(el, actions){
+  actions.innerHTML=`<button class="btn btn-primary" onclick="addBeginRow()">+ Add Row</button>
+    <button class="btn btn-success" onclick="saveBeginInventory()" style="margin-left:8px">💾 Save All</button>`;
+
+  const existing=(DB.stockIn||[]).filter(s=>s.isOpeningStock);
+
+  el.innerHTML=`
+  <div class="card" style="margin-bottom:20px">
+    <div style="font-weight:700;font-size:16px;margin-bottom:4px">🗃️ Beginning Inventory</div>
+    <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">Enter your existing stock before you started using the system. Each row will be saved as an opening stock entry and feed into FIFO.</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Product</th><th>Quantity</th><th>Unit</th><th>Unit Cost (₱)</th><th>Total Cost (₱)</th><th></th>
+        </tr></thead>
+        <tbody id="begin-tbody"></tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn btn-secondary" onclick="addBeginRow()">+ Add Row</button>
+      <button class="btn btn-success" onclick="saveBeginInventory()">💾 Save All</button>
+    </div>
+  </div>
+  ${existing.length?`
+  <div class="card">
+    <div style="font-weight:700;font-size:15px;margin-bottom:12px">Saved Opening Stock Entries (${existing.length})</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>Unit Cost</th><th>Total Cost</th><th>Remaining</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${existing.slice().reverse().map(s=>{
+            const p=DB.products.find(x=>x.id===s.productId);
+            return`<tr>
+              <td>${fmtDate(s.date)}</td>
+              <td class="fw-bold">${p?.name||s.productId}</td>
+              <td>${fmtN(s.qty)} ${s.sellUnit||'kg'}</td>
+              <td>${fmt(s.costPerUnit)}</td>
+              <td class="fw-bold">${fmt(s.totalCost)}</td>
+              <td>${fmtN(s.remainingQty||0)} ${s.sellUnit||'kg'}</td>
+              <td><button class="btn btn-danger btn-sm" onclick="deleteBeginEntry('${s.id}')">🗑️ Del</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`:''}`;
+
+  // Add one empty row by default if no existing entries
+  if(!existing.length) addBeginRow();
+}
+
+function addBeginRow(){
+  const tbody=document.getElementById('begin-tbody');
+  if(!tbody)return;
+  const productOpts=(DB.products||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  const today=new Date().toISOString().split('T')[0];
+  const rowId='br_'+genId();
+  const tr=document.createElement('tr');
+  tr.id=rowId;
+  tr.innerHTML=`
+    <td><input type="date" class="bi-date" value="${today}" style="width:130px"></td>
+    <td><select class="bi-product" style="min-width:150px"><option value="">-- Select --</option>${productOpts}</select></td>
+    <td><input type="number" class="bi-qty" min="0" step="any" placeholder="0" style="width:90px" oninput="calcBeginTotal(this)"></td>
+    <td><select class="bi-unit" style="width:80px"><option value="kg">kg</option><option value="pcs">pcs</option><option value="box">box</option><option value="bag">bag</option><option value="pack">pack</option><option value="bundle">bundle</option></select></td>
+    <td><input type="number" class="bi-cost" min="0" step="any" placeholder="0.00" style="width:100px" oninput="calcBeginTotal(this)"></td>
+    <td><span class="bi-total fw-bold text-green">₱0.00</span></td>
+    <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>`;
+  tbody.appendChild(tr);
+}
+
+function calcBeginTotal(inp){
+  const tr=inp.closest('tr');
+  const qty=parseFloat(tr.querySelector('.bi-qty').value)||0;
+  const cost=parseFloat(tr.querySelector('.bi-cost').value)||0;
+  tr.querySelector('.bi-total').textContent='₱'+fmtN(qty*cost);
+}
+
+async function saveBeginInventory(){
+  const tbody=document.getElementById('begin-tbody');
+  if(!tbody)return;
+  const rows=[...tbody.querySelectorAll('tr')];
+  if(!rows.length){showToast('No rows to save','error');return;}
+
+  let saved=0, errors=0;
+  for(const tr of rows){
+    const date=tr.querySelector('.bi-date').value;
+    const productId=tr.querySelector('.bi-product').value;
+    const qty=parseFloat(tr.querySelector('.bi-qty').value)||0;
+    const unit=tr.querySelector('.bi-unit').value;
+    const costPerUnit=parseFloat(tr.querySelector('.bi-cost').value)||0;
+
+    if(!productId){errors++;showToast('Select a product for each row','error');continue;}
+    if(!qty||!costPerUnit){errors++;showToast('Qty and Unit Cost are required','error');continue;}
+
+    const entry={
+      id:genId(),
+      date,
+      productId,
+      supplierId:'',
+      type: DB.products.find(p=>p.id===productId)?.type||'vegetable',
+      bulkUnit:unit, bulkQty:qty, kgPerBulk:1, costPerBulk:costPerUnit,
+      sellUnit:unit,
+      qty, costPerUnit, totalCost:qty*costPerUnit,
+      remainingQty:qty,
+      paymentMethod:'cash',
+      staffUser:SESSION.username,
+      isOpeningStock:true
+    };
+
+    DB.stockIn.push(entry);
+    saveDB();
+    await gasPost({action:'add',sheet:'StockIn',data:entry});
+    logActivity('Beginning Inventory',`${productName(productId)}: ${fmtN(qty)} ${unit} @ ${fmt(costPerUnit)}`);
+    saved++;
+  }
+
+  if(saved>0){
+    showToast(`${saved} opening stock entr${saved===1?'y':'ies'} saved ✓`,'success');
+    renderPage('begininventory');
+  }
+}
+
+async function deleteBeginEntry(id){
+  if(!confirm('Delete this opening stock entry? This will affect FIFO calculations.'))return;
+  DB.stockIn=DB.stockIn.filter(x=>x.id!==id);
+  saveDB();
+  await gasPost({action:'delete',sheet:'StockIn',data:{id}});
+  showToast('Entry deleted','warning');
+  renderPage('begininventory');
 }
 
 // ─────────────────────────────────────────────
