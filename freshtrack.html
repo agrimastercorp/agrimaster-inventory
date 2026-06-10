@@ -4609,25 +4609,96 @@ function renderAssets(el,actions){
 function openAssetModal(id){
   const a=id?(DB.assets||[]).find(x=>x.id===id):null;
   const catOpts=PPE_CATEGORIES.map(c=>`<option value="${c}" ${a?.category===c?'selected':''}>${c}</option>`).join('');
-  openModal(`
-    <div class="modal-header"><h3>${a?'Edit Asset':'Add Asset'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+  openModal(`<div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <span class="modal-title">🏗️ ${a?'Edit Asset':'Add Asset'}</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
     <div class="modal-body">
-      <div class="form-group"><label>Asset Name</label><input id="ast-name" value="${a?.name||''}" placeholder="e.g. Delivery Van"></div>
-      <div class="form-group"><label>Category</label><select id="ast-cat">${catOpts}</select></div>
-      <div class="form-row">
-        <div class="form-group"><label>Purchase Date</label><input type="date" id="ast-date" value="${a?.purchaseDate||new Date().toISOString().split('T')[0]}"></div>
-        <div class="form-group"><label>Cost (₱)</label><input type="number" id="ast-cost" min="0" step="any" value="${a?.cost||''}" placeholder="0.00"></div>
+
+      <div class="form-group">
+        <label>Asset Name *</label>
+        <input id="ast-name" value="${a?.name||''}" placeholder="e.g. Delivery Van, Refrigerator, Laptop" style="font-size:15px;font-weight:600">
       </div>
-      <div class="form-row">
-        <div class="form-group"><label>Salvage Value (₱)</label><input type="number" id="ast-salvage" min="0" step="any" value="${a?.salvageValue||0}" placeholder="0.00"></div>
-        <div class="form-group"><label>Useful Life (years)</label><input type="number" id="ast-life" min="1" max="50" step="1" value="${a?.usefulLife||5}" placeholder="5"></div>
+
+      <div class="form-group">
+        <label>Category *</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+          ${PPE_CATEGORIES.map(c=>`
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:7px 14px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;transition:all .15s" id="ast-cat-lbl-${c.replace(/[^a-z]/gi,'')}" onclick="selectAssetCat('${c}')">
+              <input type="radio" name="ast-cat-radio" value="${c}" ${(a?.category||'Vehicle')===c?'checked':''} style="display:none">
+              ${c==='Vehicle'?'🚗':c==='Equipment'?'⚙️':c==='Furniture & Fixtures'?'🪑':c==='Land'?'🌏':c==='Building'?'🏢':c==='Computer & IT'?'💻':c==='Tools & Machinery'?'🔧':'📦'} ${c}
+            </label>`).join('')}
+        </div>
+        <input type="hidden" id="ast-cat" value="${a?.category||'Vehicle'}">
       </div>
-      <div class="form-group"><label>Notes</label><input id="ast-notes" value="${a?.notes||''}" placeholder="Optional description"></div>
+
+      <hr class="divider">
+
+      <div class="form-grid form-grid-2">
+        <div class="form-group">
+          <label>Purchase Date *</label>
+          <input type="date" id="ast-date" value="${a?.purchaseDate||new Date().toISOString().split('T')[0]}">
+        </div>
+        <div class="form-group">
+          <label>Cost (₱) *</label>
+          <input type="number" id="ast-cost" min="0" step="any" value="${a?.cost||''}" placeholder="0.00" oninput="calcAssetDepPreview()">
+        </div>
+        <div class="form-group">
+          <label>Salvage Value (₱)</label>
+          <input type="number" id="ast-salvage" min="0" step="any" value="${a?.salvageValue||0}" placeholder="0.00" oninput="calcAssetDepPreview()">
+        </div>
+        <div class="form-group">
+          <label>Useful Life (years) *</label>
+          <input type="number" id="ast-life" min="1" max="50" step="1" value="${a?.usefulLife||5}" placeholder="5" oninput="calcAssetDepPreview()">
+        </div>
+      </div>
+
+      <div id="ast-dep-preview" style="background:var(--bg-secondary);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--text-muted);margin-bottom:12px;display:none">
+        📉 Annual Depreciation: <strong id="ast-dep-val" style="color:var(--primary)">—</strong>
+        &nbsp;|&nbsp; Monthly: <strong id="ast-dep-monthly">—</strong>
+      </div>
+
+      <div class="form-group">
+        <label>Notes</label>
+        <input id="ast-notes" value="${a?.notes||''}" placeholder="Optional — plate number, serial no., location, etc.">
+      </div>
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveAsset('${id||''}')">Save Asset</button>
-    </div>`);
+      <button class="btn btn-primary" onclick="saveAsset('${id||''}')">💾 Save Asset</button>
+    </div>
+  </div>`);
+  // Highlight selected category on open
+  selectAssetCat(a?.category||'Vehicle');
+  calcAssetDepPreview();
+}
+
+function selectAssetCat(cat){
+  document.getElementById('ast-cat').value=cat;
+  PPE_CATEGORIES.forEach(c=>{
+    const lbl=document.getElementById('ast-cat-lbl-'+c.replace(/[^a-z]/gi,''));
+    if(lbl)lbl.style.cssText=`display:flex;align-items:center;gap:6px;cursor:pointer;padding:7px 14px;border:2px solid ${c===cat?'var(--primary)':'var(--border)'};border-radius:8px;font-size:13px;font-weight:600;transition:all .15s;background:${c===cat?'var(--primary-light, #eff6ff)':''}`;
+    const radio=lbl?.querySelector('input[type=radio]');
+    if(radio)radio.checked=c===cat;
+  });
+}
+
+function calcAssetDepPreview(){
+  const cost=parseFloat(document.getElementById('ast-cost')?.value)||0;
+  const salvage=parseFloat(document.getElementById('ast-salvage')?.value)||0;
+  const life=parseInt(document.getElementById('ast-life')?.value)||0;
+  const preview=document.getElementById('ast-dep-preview');
+  if(!preview)return;
+  if(cost>0&&life>0){
+    const annual=(cost-salvage)/life;
+    document.getElementById('ast-dep-val').textContent=`₱ ${fmtN(annual)}`;
+    document.getElementById('ast-dep-monthly').textContent=`₱ ${fmtN(annual/12)}`;
+    preview.style.display='block';
+  } else {
+    preview.style.display='none';
+  }
 }
 
 async function saveAsset(id){
