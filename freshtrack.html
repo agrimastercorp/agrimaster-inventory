@@ -4974,10 +4974,13 @@ function buildIncomeStatement(){
   const body=document.getElementById('is-body');
   if(!body)return;
 
+  const periodStart=month==='all'?`${year}-01-01`:`${year}-${month}-01`;
+  const periodEnd=month==='all'?`${year}-12-31`:`${year}-${month}-31`;
+
   function inPeriod(dateStr){
     if(!dateStr)return false;
-    if(month==='all')return dateStr.startsWith(year);
-    return dateStr.startsWith(`${year}-${month}`);
+    if(month==='all')return dateStr.slice(0,4)===year;
+    return dateStr.slice(0,7)===`${year}-${month}`;
   }
 
   // ── REVENUE ──
@@ -4985,22 +4988,27 @@ function buildIncomeStatement(){
   const grossSales=salesOut.reduce((s,x)=>s+(+x.totalRevenue||0),0);
   const cashSales=salesOut.filter(x=>x.paymentMethod==='cash'||x.paymentMethod==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0);
   const creditSales=salesOut.filter(x=>x.paymentMethod==='credit').reduce((s,x)=>s+(+x.totalRevenue||0),0);
-  const netSales=grossSales; // no returns tracked yet
+
+  // Sales deductions (from payment collections in period)
+  const salesDeductions=(DB.payments||[]).filter(p=>inPeriod(p.date))
+    .reduce((s,p)=>s+(+p.totalDeductions||0),0);
+  const netSales=grossSales-salesDeductions;
 
   // ── COGS ──
-  // Beginning Inventory: cost of opening stock bought BEFORE period
-  const periodStart=month==='all'?`${year}-01-01`:`${year}-${month}-01`;
+  // Beginning Inventory: estimated value of stock on hand at period start
   const beginningInventory=(DB.stockIn||[])
     .filter(s=>s.date<periodStart)
     .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
 
-  // Purchases during period
-  const periodPurchases=(DB.stockIn||[]).filter(s=>inPeriod(s.date));
-  const totalPurchases=periodPurchases.reduce((s,b)=>s+(+b.totalCost||0),0);
+  // Purchases during period (total cost of all stock-in entries)
+  const totalPurchases=(DB.stockIn||[]).filter(s=>inPeriod(s.date))
+    .reduce((s,b)=>s+(+b.totalCost||0),0);
 
-  // Ending Inventory: remaining value of ALL stock still on hand
-  const endingInventory=(DB.stockIn||[]).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
+  // Ending Inventory: current remaining value of all stock on hand
+  const endingInventory=(DB.stockIn||[])
+    .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
 
+  // COGS from FIFO (actual cost assigned to sold units)
   const cogs=salesOut.reduce((s,x)=>s+(+x.cogs||0),0);
   const grossProfit=netSales-cogs;
   const grossMargin=netSales?((grossProfit/netSales)*100).toFixed(1):0;
@@ -5012,136 +5020,156 @@ function buildIncomeStatement(){
     const cat=e.category||'General';
     expByCategory[cat]=(expByCategory[cat]||0)+(+e.amount||0);
   });
-  const totalOperatingExp=periodExpenses.reduce((s,e)=>s+(+e.amount||0),0);
+  const totalCategoryExp=periodExpenses.reduce((s,e)=>s+(+e.amount||0),0);
 
   // Spoilage loss
-  const spoilageLoss=(DB.spoilage||[]).filter(s=>inPeriod(s.date)).reduce((s,x)=>s+(+x.loss||0),0);
+  const spoilageLoss=(DB.spoilage||[]).filter(s=>inPeriod(s.date))
+    .reduce((s,x)=>s+(+x.loss||0),0);
 
-  // Depreciation for the period
-  const today=new Date();
+  // Depreciation — only assets purchased ON OR BEFORE period end, not yet fully depreciated
   const periodMonths=month==='all'?12:1;
-  const annualDepreciation=(DB.assets||[]).reduce((a,asset)=>{
-    if(!asset.usefulLife||!asset.cost)return a;
+  const today=new Date();
+  let periodDepreciation=0;
+  (DB.assets||[]).forEach(asset=>{
+    if(!asset.usefulLife||!asset.cost)return;
+    if((asset.purchaseDate||'')>periodEnd)return; // asset didn't exist yet
     const salvage=+asset.salvageValue||0;
     const cost=+asset.cost||0;
     const yrs=+asset.usefulLife||1;
-    return a+(cost-salvage)/yrs;
-  },0);
-  const periodDepreciation=(annualDepreciation/12)*periodMonths;
+    const annualDep=(cost-salvage)/yrs;
+    // Check if asset is still depreciating during this period
+    const purchaseDate=new Date(asset.purchaseDate||today);
+    const endOfLife=new Date(purchaseDate);
+    endOfLife.setFullYear(endOfLife.getFullYear()+yrs);
+    const periodEndDate=new Date(periodEnd);
+    if(purchaseDate>periodEndDate)return; // not yet purchased
+    // Pro-rate if asset was purchased mid-year or fully depreciated mid-period
+    const depStart=new Date(Math.max(purchaseDate,new Date(periodStart)));
+    const depEnd=new Date(Math.min(endOfLife,new Date(periodEnd)));
+    if(depEnd<=depStart)return; // fully depreciated before period
+    const daysInPeriod=(depEnd-depStart)/(1000*60*60*24);
+    const totalDaysInPeriod=periodMonths===12?365:30;
+    periodDepreciation+=annualDep*(daysInPeriod/365);
+  });
 
-  const totalOpEx=totalOperatingExp+spoilageLoss+periodDepreciation;
+  const totalOpEx=totalCategoryExp+spoilageLoss+periodDepreciation;
   const operatingIncome=grossProfit-totalOpEx;
 
-  // ── OTHER INCOME/EXPENSES ──
+  // ── OTHER EXPENSES — Interest on REMAINING loan balance ──
   const interestExpense=(DB.loans||[]).reduce((s,l)=>{
     if(!l.interestRate||!l.principal)return s;
-    const annual=(+l.principal||0)*(+l.interestRate||0)/100;
+    if((l.date||'')>periodEnd)return s; // loan taken after period
+    const remaining=Math.max(0,(+l.principal||0)-(+l.paidAmount||0));
+    const annual=remaining*(+l.interestRate||0)/100;
     return s+(annual/12)*periodMonths;
   },0);
 
-  const netIncomeBeforeTax=operatingIncome-interestExpense;
+  const netIncome=operatingIncome-interestExpense;
 
   // ── FORMATTING HELPERS ──
-  const periodLabel=month==='all'?`For the Year Ended December 31, ${year}`
-    :`For the Month Ended ${new Date(`${year}-${month}-01`).toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'}).replace(/^\d+\s/,'')} ${year}`;
+  const periodLabel=month==='all'
+    ?`For the Year Ended December 31, ${year}`
+    :`For the Month Ended ${new Date(`${year}-${month}-28`).toLocaleDateString('en-PH',{year:'numeric',month:'long'})}`;
 
-  function row(label,value,indent=0,bold=false,isSubtotal=false){
-    const pad=indent*20;
+  function isRow(label,value,indent=0,bold=false){
+    const neg=typeof value==='number'&&value<0;
+    return`<tr>
+      <td style="padding:3px 12px 3px ${indent*20+12}px;font-size:13px;${bold?'font-weight:600':''}">${label}</td>
+      <td style="text-align:right;padding:3px 16px 3px 8px;font-size:13px;${bold?'font-weight:600':''}${neg?';color:var(--danger)':''}">
+        ${typeof value==='number'?`${neg?'(':''}₱ ${fmtN(Math.abs(value))}${neg?')':''}`:''}</td>
+    </tr>`;
+  }
+  function isTotalRow(label,value,color='',doubleLine=false){
+    const border=doubleLine?'border-top:3px double var(--border)':'border-top:2px solid var(--border)';
     const neg=value<0;
-    return`<tr class="${isSubtotal?'is-subtotal':''}">
-      <td style="padding-left:${pad+12}px;${bold?'font-weight:700':''}font-size:13px">${label}</td>
-      <td style="text-align:right;padding-right:12px;font-size:13px;${bold?'font-weight:700':''}${neg?';color:var(--danger)':''}">
-        ${value!==null?`₱ ${fmtN(Math.abs(value))}${neg?' (Dr)':''}`:''}</td>
+    return`<tr style="background:var(--bg-secondary)">
+      <td style="font-weight:700;padding:5px 12px;font-size:13px;${border}">${label}</td>
+      <td style="text-align:right;padding:5px 16px 5px 8px;font-weight:700;font-size:13px;${color?'color:'+color:neg?'color:var(--danger)':''};${border}">
+        ${neg?'(':''}₱ ${fmtN(Math.abs(value))}${neg?')':''}</td>
     </tr>`;
   }
-  function totalRow(label,value,color=''){
-    return`<tr style="background:var(--bg-secondary);border-top:2px solid var(--border)">
-      <td style="font-weight:700;padding-left:12px;font-size:13px">${label}</td>
-      <td style="text-align:right;padding-right:12px;font-weight:700;font-size:13px;${color?'color:'+color:''};border-top:2px solid var(--border)">
-        ₱ ${fmtN(value)}</td>
-    </tr>`;
+  function isSectionHeader(label){
+    return`<tr><td colspan="2" style="font-weight:700;font-size:12px;padding:10px 12px 3px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);border-top:1px solid var(--border)">${label}</td></tr>`;
   }
-  function sectionHeader(label){
-    return`<tr><td colspan="2" style="font-weight:700;font-size:13px;padding:10px 12px 4px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);border-top:1px solid var(--border)">${label}</td></tr>`;
-  }
-  function spacer(){return`<tr><td colspan="2" style="height:8px"></td></tr>`;}
-  function divider(){return`<tr><td colspan="2"><hr style="margin:2px 12px;border-color:var(--border)"></td></tr>`;}
+  function isSpacer(){return`<tr><td colspan="2" style="height:6px"></td></tr>`;}
+  function iDivider(){return`<tr><td colspan="2"><hr style="margin:2px 12px;border-color:var(--border)"></td></tr>`;}
 
   const expRows=Object.entries(expByCategory).sort((a,b)=>b[1]-a[1])
-    .map(([cat,amt])=>row(cat,amt,2)).join('');
+    .map(([cat,amt])=>isRow(cat,amt,2)).join('');
 
   body.innerHTML=`
-  <div id="is-printable" style="max-width:720px;margin:0 auto">
-    <div class="card">
+  <div id="is-printable" style="max-width:680px;margin:0 auto">
+    <div class="card" style="padding:0;overflow:hidden">
       <!-- Header -->
-      <div style="text-align:center;padding:16px 0 8px;border-bottom:2px solid var(--border);margin-bottom:4px">
-        <div style="font-weight:800;font-size:18px;letter-spacing:.3px">${DB.settings.shopName||'Agrimaster Corporation'}</div>
-        <div style="font-weight:700;font-size:15px;margin-top:4px">STATEMENT OF COMPREHENSIVE INCOME</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${periodLabel}</div>
-        <div style="font-size:11px;color:var(--text-muted)">(In Philippine Peso)</div>
+      <div style="text-align:center;padding:20px 16px 12px;border-bottom:2px solid var(--border)">
+        <div style="font-weight:800;font-size:17px;letter-spacing:.3px;text-transform:uppercase">${DB.settings.shopName||'Agrimaster Corporation'}</div>
+        <div style="font-weight:700;font-size:14px;margin-top:6px;letter-spacing:.2px">STATEMENT OF COMPREHENSIVE INCOME</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${periodLabel}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">(Amounts in Philippine Peso)</div>
       </div>
 
       <table style="width:100%;border-collapse:collapse">
         <tbody>
-          <!-- REVENUE -->
-          ${sectionHeader('I. Revenue')}
-          ${row('Gross Sales',grossSales,1)}
-          ${row('Cash Sales',cashSales,2)}
-          ${row('Credit Sales',creditSales,2)}
-          ${divider()}
-          ${totalRow('Net Sales',netSales,'var(--primary)')}
 
-          <!-- COGS -->
-          ${spacer()}
-          ${sectionHeader('II. Cost of Goods Sold')}
-          ${row('Beginning Inventory',beginningInventory,1)}
-          ${row('Add: Purchases During Period',totalPurchases,1)}
-          ${row('Goods Available for Sale',beginningInventory+totalPurchases,1,true)}
-          ${row('Less: Ending Inventory',endingInventory,1)}
-          ${divider()}
-          ${totalRow('Total Cost of Goods Sold',cogs)}
+          <!-- I. REVENUE -->
+          ${isSectionHeader('I. Revenue')}
+          ${isRow('Gross Sales',grossSales,1,true)}
+          ${isRow('  Cash Sales',cashSales,2)}
+          ${isRow('  Credit Sales',creditSales,2)}
+          ${salesDeductions>0?isRow('Less: Sales Deductions',-salesDeductions,1):''}
+          ${iDivider()}
+          ${isTotalRow('Net Sales',netSales,'var(--primary)')}
+
+          <!-- II. COST OF GOODS SOLD -->
+          ${isSpacer()}
+          ${isSectionHeader('II. Cost of Goods Sold')}
+          ${isRow('Beginning Inventory',beginningInventory,1)}
+          ${isRow('Add: Net Purchases',totalPurchases,1)}
+          ${isRow('Goods Available for Sale',beginningInventory+totalPurchases,1,true)}
+          ${isRow('Less: Ending Inventory',endingInventory,1)}
+          ${iDivider()}
+          ${isTotalRow('Cost of Goods Sold',cogs)}
 
           <!-- GROSS PROFIT -->
-          ${spacer()}
-          ${totalRow(`Gross Profit  (${grossMargin}% margin)`,grossProfit,grossProfit>=0?'var(--success)':'var(--danger)')}
+          ${isSpacer()}
+          ${isTotalRow(`Gross Profit  (${grossMargin}% of Net Sales)`,grossProfit,grossProfit>=0?'var(--success)':'var(--danger)')}
 
-          <!-- OPERATING EXPENSES -->
-          ${spacer()}
-          ${sectionHeader('III. Operating Expenses')}
-          ${expRows||row('— No expenses recorded —',null,2)}
-          ${spoilageLoss>0?row('Spoilage & Wastage Loss',spoilageLoss,2):''}
-          ${periodDepreciation>0?row('Depreciation Expense (PP&E)',periodDepreciation,2):''}
-          ${divider()}
-          ${totalRow('Total Operating Expenses',totalOpEx)}
+          <!-- III. OPERATING EXPENSES -->
+          ${isSpacer()}
+          ${isSectionHeader('III. Operating Expenses')}
+          ${expRows||isRow('No operating expenses recorded',null,2)}
+          ${spoilageLoss>0?isRow('Spoilage & Wastage Loss',spoilageLoss,2):''}
+          ${periodDepreciation>0?isRow('Depreciation Expense — PP&E',periodDepreciation,2):''}
+          ${iDivider()}
+          ${isTotalRow('Total Operating Expenses',totalOpEx)}
 
           <!-- OPERATING INCOME -->
-          ${spacer()}
-          ${totalRow('Operating Income (EBIT)',operatingIncome,operatingIncome>=0?'var(--success)':'var(--danger)')}
+          ${isSpacer()}
+          ${isTotalRow('Operating Income (EBIT)',operatingIncome,operatingIncome>=0?'var(--success)':'var(--danger)')}
 
-          <!-- OTHER EXPENSES -->
+          <!-- IV. OTHER EXPENSES -->
           ${interestExpense>0?`
-          ${spacer()}
-          ${sectionHeader('IV. Other Expenses')}
-          ${row('Interest Expense',interestExpense,1)}
-          ${divider()}
-          ${totalRow('Total Other Expenses',interestExpense)}
+          ${isSpacer()}
+          ${isSectionHeader('IV. Other Expenses')}
+          ${isRow('Interest Expense on Loans',interestExpense,2)}
+          ${iDivider()}
+          ${isTotalRow('Total Other Expenses',interestExpense)}
           `:''}
 
           <!-- NET INCOME -->
-          ${spacer()}
-          <tr style="background:${netIncomeBeforeTax>=0?'#f0fdf4':'#fef2f2'};border-top:3px double var(--border)">
-            <td style="font-weight:800;font-size:15px;padding:12px 12px">NET INCOME ${netIncomeBeforeTax<0?'(LOSS)':''}</td>
-            <td style="text-align:right;padding-right:12px;font-weight:800;font-size:15px;color:${netIncomeBeforeTax>=0?'var(--success)':'var(--danger)'};border-top:3px double var(--border)">
-              ₱ ${fmtN(Math.abs(netIncomeBeforeTax))}${netIncomeBeforeTax<0?' (Loss)':''}
-            </td>
-          </tr>
+          ${isSpacer()}
+          ${isTotalRow(`NET INCOME${netIncome<0?' (LOSS)':''}`,netIncome,netIncome>=0?'var(--success)':'var(--danger)',true)}
+
         </tbody>
       </table>
 
-      <div style="margin-top:16px;padding:12px;background:var(--bg-secondary);border-radius:8px;font-size:11px;color:var(--text-muted)">
-        <strong>Notes:</strong> COGS calculated using FIFO method. Depreciation computed on straight-line basis.
-        Beginning inventory reflects estimated remaining cost value of stock prior to period.
-        Interest expense estimated from outstanding loan balances and stated interest rates.
+      <div style="padding:12px 16px;background:var(--bg-secondary);border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);line-height:1.6">
+        <strong>Notes to Financial Statement:</strong><br>
+        • COGS calculated using FIFO (First-In, First-Out) method based on actual cost of sold units.<br>
+        • Depreciation computed on straight-line basis; only active assets within useful life are included.<br>
+        • Interest expense based on outstanding loan balance × stated annual interest rate.<br>
+        • Sales deductions (withholding tax, damaged goods, etc.) deducted from gross sales.<br>
+        • Beginning inventory is an estimate based on remaining cost value of prior-period stock.
       </div>
     </div>
   </div>`;
@@ -5172,10 +5200,25 @@ function renderBalanceSheet(el){
   const today=new Date();
 
   // ── CURRENT ASSETS ──
-  // Cash on hand from Cash Summary (total collections - total expenses - AP paid)
-  const totalCash=(DB.payments||[]).reduce((s,p)=>s+(+p.amount||0),0)
-    +(DB.stockOut||[]).filter(s=>s.paymentMethod==='cash'||s.paymentMethod==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0)
-    -(DB.expenses||[]).reduce((s,e)=>s+(+e.amount||0),0);
+  // Cash: inflows minus outflows
+  const cashSalesIn=(DB.stockOut||[])
+    .filter(s=>s.paymentMethod==='cash'||s.paymentMethod==='gcash')
+    .reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const creditCollections=(DB.payments||[])
+    .reduce((s,p)=>s+(+p.netAmount||+p.amount||0),0); // use net after deductions
+  const loanProceeds=(DB.loans||[])
+    .reduce((s,l)=>s+(+l.principal||0),0);
+  const cashExpenses=(DB.expenses||[])
+    .reduce((s,e)=>s+(+e.amount||0),0);
+  const cashStockPurchases=(DB.stockIn||[])
+    .filter(b=>b.paymentMethod==='cash'||b.paymentMethod==='gcash')
+    .reduce((s,b)=>s+(+b.totalCost||0),0);
+  const apPaymentsMade=(DB.accountsPayable||[])
+    .reduce((s,x)=>s+(+x.paidAmount||0),0);
+  const loanRepayments=(DB.loans||[])
+    .reduce((s,l)=>s+(+l.paidAmount||0),0);
+  const totalCash=cashSalesIn+creditCollections+loanProceeds
+    -cashExpenses-cashStockPurchases-apPaymentsMade-loanRepayments;
 
   // Accounts Receivable (unpaid credit sales)
   const ar=(DB.customers||[]).reduce((s,c)=>s+(+c.balance||0),0);
@@ -5183,7 +5226,7 @@ function renderBalanceSheet(el){
   // Inventory value (remaining qty × cost per unit using FIFO batches)
   const inventoryValue=(DB.stockIn||[]).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
 
-  const totalCurrentAssets=Math.max(0,totalCash)+ar+inventoryValue;
+  const totalCurrentAssets=totalCash+ar+inventoryValue;
 
   // ── NON-CURRENT ASSETS (PP&E) ──
   function calcBookValue(a){
