@@ -525,6 +525,7 @@ const DB_KEY = 'freshtrack_db';
 let DB = {
   products:[],suppliers:[],customers:[],
   stockIn:[],stockOut:[],spoilage:[],expenses:[],payments:[],accountsPayable:[],
+  assets:[],loans:[],
   activityLog:[],
   settings:{gasUrl:'',shopName:'Agrimaster Corporation',ownerEmail:''}
 };
@@ -537,6 +538,8 @@ function loadDB(){
   // Migrate old branding
   if(!DB.settings)DB.settings={};
   if(!DB.settings.shopName||DB.settings.shopName==='FreshTrack')DB.settings.shopName='Agrimaster Corporation';
+  if(!DB.assets)DB.assets=[];
+  if(!DB.loans)DB.loans=[];
 
   deduplicateProducts();
 }
@@ -705,6 +708,9 @@ const NAV = [
   {id:'accountspayable',label:'Accounts Payable', icon:'🧾', section:'Finance', roles:['owner'], pageId:'page_accountspayable'},
   {id:'cashsummary',    label:'Cash Summary',     icon:'💰', section:'Finance', roles:['owner'], pageId:'page_cashsummary'},
   {id:'pnl',        label:'P&L Summary',   icon:'📈', section:'Finance',   roles:['owner']},
+  {id:'assets',     label:'Assets (PP&E)', icon:'🏗️', section:'Finance',   roles:['owner']},
+  {id:'loans',      label:'Loans & Liabilities', icon:'🏦', section:'Finance', roles:['owner']},
+  {id:'balancesheet',label:'Balance Sheet', icon:'⚖️', section:'Finance',  roles:['owner']},
   {id:'reports',    label:'Reports Hub',   icon:'🗂️', section:'Reports',   roles:['owner'], pageId:'page_reports'},
   {id:'trends',     label:'Sales Trends',  icon:'📉', section:'Reports',   roles:['owner']},
   {id:'birreport',  label:'BIR Report',    icon:'🧾', section:'Reports',   roles:['owner']},
@@ -893,6 +899,9 @@ function renderPage(page){
     case 'activitylog':  renderActivityLog(el); break;
     case 'setup':        renderSetup(el); if(SESSION.role==='owner'&&(DB.settings.gasUrl||BAKED_GAS_URL)){syncFromGAS().then(ok=>{if(ok)renderSetup(document.getElementById('page-content'));});} break;
     case 'begininventory': renderBeginInventory(el,actions); break;
+    case 'assets':       renderAssets(el,actions); break;
+    case 'loans':        renderLoans(el,actions); break;
+    case 'balancesheet': renderBalanceSheet(el); break;
     default: el.innerHTML='<p>Page not found.</p>';
   }
 }
@@ -4439,6 +4448,397 @@ function renderActivityLog(el){
           </tr>`).join('')||'<tr><td colspan="4"><div class="empty-state"><div class="icon">📝</div><h3>No activity yet</h3></div></td></tr>'}
         </tbody>
       </table>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+//  ASSETS (PP&E)
+// ─────────────────────────────────────────────
+const PPE_CATEGORIES=['Vehicle','Equipment','Furniture & Fixtures','Land','Building','Computer & IT','Tools & Machinery','Other'];
+
+function renderAssets(el,actions){
+  actions.innerHTML=`<button class="btn btn-primary" onclick="openAssetModal()">+ Add Asset</button>`;
+  const assets=DB.assets||[];
+  const today=new Date();
+
+  function calcDepreciation(a){
+    if(!a.usefulLife||!a.cost)return{annualDep:0,accumulatedDep:0,bookValue:+a.cost||0};
+    const salvage=+a.salvageValue||0;
+    const cost=+a.cost||0;
+    const years=+a.usefulLife||1;
+    const annualDep=(cost-salvage)/years;
+    const start=new Date(a.purchaseDate||a.date||today);
+    const yearsElapsed=(today-start)/(1000*60*60*24*365.25);
+    const accumulatedDep=Math.min(cost-salvage, annualDep*yearsElapsed);
+    const bookValue=Math.max(salvage, cost-accumulatedDep);
+    return{annualDep,accumulatedDep,bookValue};
+  }
+
+  const rows=assets.length?assets.slice().reverse().map(a=>{
+    const dep=calcDepreciation(a);
+    const fullyDep=dep.bookValue<=(+a.salvageValue||0)+0.01;
+    return`<tr>
+      <td>${fmtDate(a.purchaseDate)}</td>
+      <td class="fw-bold">${a.name}</td>
+      <td><span class="badge badge-blue">${a.category||'Other'}</span></td>
+      <td>${fmt(+a.cost||0)}</td>
+      <td>${fmt(+a.salvageValue||0)}</td>
+      <td>${a.usefulLife||'—'} yrs</td>
+      <td>${fmt(dep.annualDep)}/yr</td>
+      <td>${fmt(dep.accumulatedDep)}</td>
+      <td class="fw-bold ${fullyDep?'':'text-green'}">${fmt(dep.bookValue)}</td>
+      <td><span class="badge ${fullyDep?'':'badge-green'}">${fullyDep?'Fully Depreciated':'Active'}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-secondary btn-sm" onclick="openAssetModal('${a.id}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteAsset('${a.id}')">🗑️</button>
+      </td>
+    </tr>`;
+  }).join(''):`<tr><td colspan="11"><div class="empty-state"><div class="icon">🏗️</div><h3>No assets yet</h3></div></td></tr>`;
+
+  const totalCost=assets.reduce((s,a)=>s+(+a.cost||0),0);
+  const totalBookValue=assets.reduce((s,a)=>s+calcDepreciation(a).bookValue,0);
+  const totalAccDep=assets.reduce((s,a)=>s+calcDepreciation(a).accumulatedDep,0);
+
+  el.innerHTML=`
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
+    <div class="card" style="text-align:center">
+      <div style="color:var(--text-muted);font-size:13px">Total Cost</div>
+      <div style="font-size:22px;font-weight:700">${fmt(totalCost)}</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="color:var(--text-muted);font-size:13px">Accumulated Depreciation</div>
+      <div style="font-size:22px;font-weight:700;color:var(--danger)">${fmt(totalAccDep)}</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="color:var(--text-muted);font-size:13px">Net Book Value</div>
+      <div style="font-size:22px;font-weight:700;color:var(--success)">${fmt(totalBookValue)}</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Purchase Date</th><th>Asset Name</th><th>Category</th><th>Cost</th><th>Salvage Value</th>
+          <th>Useful Life</th><th>Annual Dep.</th><th>Acc. Dep.</th><th>Book Value</th><th>Status</th><th>Actions</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function openAssetModal(id){
+  const a=id?(DB.assets||[]).find(x=>x.id===id):null;
+  const catOpts=PPE_CATEGORIES.map(c=>`<option value="${c}" ${a?.category===c?'selected':''}>${c}</option>`).join('');
+  openModal(`
+    <div class="modal-header"><h3>${a?'Edit Asset':'Add Asset'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Asset Name</label><input id="ast-name" value="${a?.name||''}" placeholder="e.g. Delivery Van"></div>
+      <div class="form-group"><label>Category</label><select id="ast-cat">${catOpts}</select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Purchase Date</label><input type="date" id="ast-date" value="${a?.purchaseDate||new Date().toISOString().split('T')[0]}"></div>
+        <div class="form-group"><label>Cost (₱)</label><input type="number" id="ast-cost" min="0" step="any" value="${a?.cost||''}" placeholder="0.00"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Salvage Value (₱)</label><input type="number" id="ast-salvage" min="0" step="any" value="${a?.salvageValue||0}" placeholder="0.00"></div>
+        <div class="form-group"><label>Useful Life (years)</label><input type="number" id="ast-life" min="1" max="50" step="1" value="${a?.usefulLife||5}" placeholder="5"></div>
+      </div>
+      <div class="form-group"><label>Notes</label><input id="ast-notes" value="${a?.notes||''}" placeholder="Optional description"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAsset('${id||''}')">Save Asset</button>
+    </div>`);
+}
+
+async function saveAsset(id){
+  const name=document.getElementById('ast-name').value.trim();
+  const category=document.getElementById('ast-cat').value;
+  const purchaseDate=document.getElementById('ast-date').value;
+  const cost=parseFloat(document.getElementById('ast-cost').value)||0;
+  const salvageValue=parseFloat(document.getElementById('ast-salvage').value)||0;
+  const usefulLife=parseInt(document.getElementById('ast-life').value)||5;
+  const notes=document.getElementById('ast-notes').value.trim();
+  if(!name||!cost){showToast('Asset name and cost are required','error');return;}
+  if(salvageValue>=cost){showToast('Salvage value must be less than cost','error');return;}
+  if(!DB.assets)DB.assets=[];
+  if(id){
+    const a=DB.assets.find(x=>x.id===id);
+    if(a){Object.assign(a,{name,category,purchaseDate,cost,salvageValue,usefulLife,notes});}
+  } else {
+    DB.assets.push({id:genId(),name,category,purchaseDate,cost,salvageValue,usefulLife,notes});
+  }
+  saveDB();
+  await gasPost({action:id?'update':'add',sheet:'Assets',data:DB.assets.find(x=>x.name===name&&x.purchaseDate===purchaseDate)||DB.assets[DB.assets.length-1]});
+  logActivity(id?'Edit Asset':'Add Asset',`${name} — ${fmt(cost)}, ${usefulLife}yrs`);
+  closeModal();
+  showToast('Asset saved','success');
+  renderPage('assets');
+}
+
+async function deleteAsset(id){
+  if(!confirm('Delete this asset? This will affect your Balance Sheet.'))return;
+  const a=(DB.assets||[]).find(x=>x.id===id);
+  DB.assets=(DB.assets||[]).filter(x=>x.id!==id);
+  saveDB();
+  await gasPost({action:'delete',sheet:'Assets',data:{id}});
+  logActivity('Delete Asset',a?.name||id);
+  showToast('Asset deleted','warning');
+  renderPage('assets');
+}
+
+// ─────────────────────────────────────────────
+//  LOANS & LIABILITIES
+// ─────────────────────────────────────────────
+const LOAN_CATEGORIES=['Bank Loan','SSS/Pag-IBIG/PhilHealth','Personal Loan','Credit Line','Mortgage','Vehicle Loan','Equipment Loan','Other'];
+
+function renderLoans(el,actions){
+  actions.innerHTML=`<button class="btn btn-primary" onclick="openLoanModal()">+ Add Liability</button>`;
+  const loans=DB.loans||[];
+  const today=new Date();
+
+  const rows=loans.length?loans.slice().reverse().map(l=>{
+    const remaining=(+l.principal||0)-(+l.paidAmount||0);
+    const isSettled=remaining<=0;
+    return`<tr>
+      <td>${fmtDate(l.date)}</td>
+      <td class="fw-bold">${l.name}</td>
+      <td><span class="badge badge-blue">${l.category||'Other'}</span></td>
+      <td>${fmt(+l.principal||0)}</td>
+      <td class="fw-bold ${isSettled?'':'text-danger'}">${fmt(Math.max(0,remaining))}</td>
+      <td>${l.interestRate?l.interestRate+'%':'—'}</td>
+      <td>${l.dueDate?fmtDate(l.dueDate):'—'}</td>
+      <td><span class="badge ${isSettled?'badge-green':''}">${isSettled?'Settled':'Outstanding'}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-secondary btn-sm" onclick="openLoanModal('${l.id}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteLoan('${l.id}')">🗑️</button>
+      </td>
+    </tr>`;
+  }).join(''):`<tr><td colspan="9"><div class="empty-state"><div class="icon">🏦</div><h3>No liabilities yet</h3></div></td></tr>`;
+
+  const totalPrincipal=loans.reduce((s,l)=>s+(+l.principal||0),0);
+  const totalRemaining=loans.reduce((s,l)=>s+Math.max(0,(+l.principal||0)-(+l.paidAmount||0)),0);
+
+  el.innerHTML=`
+  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:20px">
+    <div class="card" style="text-align:center">
+      <div style="color:var(--text-muted);font-size:13px">Total Principal</div>
+      <div style="font-size:22px;font-weight:700">${fmt(totalPrincipal)}</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="color:var(--text-muted);font-size:13px">Total Outstanding</div>
+      <div style="font-size:22px;font-weight:700;color:var(--danger)">${fmt(totalRemaining)}</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Name</th><th>Category</th><th>Principal</th><th>Remaining</th>
+          <th>Interest Rate</th><th>Due Date</th><th>Status</th><th>Actions</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function openLoanModal(id){
+  const l=id?(DB.loans||[]).find(x=>x.id===id):null;
+  const catOpts=LOAN_CATEGORIES.map(c=>`<option value="${c}" ${l?.category===c?'selected':''}>${c}</option>`).join('');
+  openModal(`
+    <div class="modal-header"><h3>${l?'Edit Liability':'Add Liability'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Name / Description</label><input id="ln-name" value="${l?.name||''}" placeholder="e.g. BDO Business Loan"></div>
+      <div class="form-group"><label>Category</label><select id="ln-cat">${catOpts}</select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Date Taken</label><input type="date" id="ln-date" value="${l?.date||new Date().toISOString().split('T')[0]}"></div>
+        <div class="form-group"><label>Principal Amount (₱)</label><input type="number" id="ln-principal" min="0" step="any" value="${l?.principal||''}" placeholder="0.00"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Amount Paid So Far (₱)</label><input type="number" id="ln-paid" min="0" step="any" value="${l?.paidAmount||0}" placeholder="0.00"></div>
+        <div class="form-group"><label>Interest Rate (% per year)</label><input type="number" id="ln-rate" min="0" step="any" value="${l?.interestRate||''}" placeholder="Optional"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Due Date</label><input type="date" id="ln-due" value="${l?.dueDate||''}"></div>
+        <div class="form-group"><label>Lender</label><input id="ln-lender" value="${l?.lender||''}" placeholder="e.g. BDO Bank"></div>
+      </div>
+      <div class="form-group"><label>Notes</label><input id="ln-notes" value="${l?.notes||''}" placeholder="Optional"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveLoan('${id||''}')">Save</button>
+    </div>`);
+}
+
+async function saveLoan(id){
+  const name=document.getElementById('ln-name').value.trim();
+  const category=document.getElementById('ln-cat').value;
+  const date=document.getElementById('ln-date').value;
+  const principal=parseFloat(document.getElementById('ln-principal').value)||0;
+  const paidAmount=parseFloat(document.getElementById('ln-paid').value)||0;
+  const interestRate=parseFloat(document.getElementById('ln-rate').value)||0;
+  const dueDate=document.getElementById('ln-due').value;
+  const lender=document.getElementById('ln-lender').value.trim();
+  const notes=document.getElementById('ln-notes').value.trim();
+  if(!name||!principal){showToast('Name and principal amount are required','error');return;}
+  if(!DB.loans)DB.loans=[];
+  const entry={id:id||genId(),name,category,date,principal,paidAmount,interestRate,dueDate,lender,notes};
+  if(id){const idx=DB.loans.findIndex(x=>x.id===id);if(idx>=0)DB.loans[idx]=entry;}
+  else DB.loans.push(entry);
+  saveDB();
+  await gasPost({action:id?'update':'add',sheet:'Loans',data:entry});
+  logActivity(id?'Edit Loan':'Add Loan',`${name} — ${fmt(principal)}`);
+  closeModal();
+  showToast('Liability saved','success');
+  renderPage('loans');
+}
+
+async function deleteLoan(id){
+  if(!confirm('Delete this liability?'))return;
+  const l=(DB.loans||[]).find(x=>x.id===id);
+  DB.loans=(DB.loans||[]).filter(x=>x.id!==id);
+  saveDB();
+  await gasPost({action:'delete',sheet:'Loans',data:{id}});
+  logActivity('Delete Loan',l?.name||id);
+  showToast('Liability deleted','warning');
+  renderPage('loans');
+}
+
+// ─────────────────────────────────────────────
+//  BALANCE SHEET
+// ─────────────────────────────────────────────
+function renderBalanceSheet(el){
+  const today=new Date();
+
+  // ── CURRENT ASSETS ──
+  // Cash on hand from Cash Summary (total collections - total expenses - AP paid)
+  const totalCash=(DB.payments||[]).reduce((s,p)=>s+(+p.amount||0),0)
+    +(DB.stockOut||[]).filter(s=>s.paymentMethod==='cash'||s.paymentMethod==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0)
+    -(DB.expenses||[]).reduce((s,e)=>s+(+e.amount||0),0);
+
+  // Accounts Receivable (unpaid credit sales)
+  const ar=(DB.customers||[]).reduce((s,c)=>s+(+c.balance||0),0);
+
+  // Inventory value (remaining qty × cost per unit using FIFO batches)
+  const inventoryValue=(DB.stockIn||[]).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
+
+  const totalCurrentAssets=Math.max(0,totalCash)+ar+inventoryValue;
+
+  // ── NON-CURRENT ASSETS (PP&E) ──
+  function calcBookValue(a){
+    if(!a.usefulLife||!a.cost)return+a.cost||0;
+    const salvage=+a.salvageValue||0;
+    const cost=+a.cost||0;
+    const years=+a.usefulLife||1;
+    const annualDep=(cost-salvage)/years;
+    const start=new Date(a.purchaseDate||today);
+    const yearsElapsed=(today-start)/(1000*60*60*24*365.25);
+    const accDep=Math.min(cost-salvage,annualDep*yearsElapsed);
+    return Math.max(salvage,cost-accDep);
+  }
+  const assetsByCategory={};
+  (DB.assets||[]).forEach(a=>{
+    const cat=a.category||'Other';
+    if(!assetsByCategory[cat])assetsByCategory[cat]={cost:0,bookValue:0};
+    assetsByCategory[cat].cost+=(+a.cost||0);
+    assetsByCategory[cat].bookValue+=calcBookValue(a);
+  });
+  const totalPPECost=(DB.assets||[]).reduce((s,a)=>s+(+a.cost||0),0);
+  const totalPPEBook=(DB.assets||[]).reduce((s,a)=>s+calcBookValue(a),0);
+  const totalAccDep=totalPPECost-totalPPEBook;
+  const totalNonCurrentAssets=totalPPEBook;
+  const totalAssets=totalCurrentAssets+totalNonCurrentAssets;
+
+  // ── CURRENT LIABILITIES ──
+  const apOutstanding=(DB.accountsPayable||[]).filter(x=>x.status!=='paid').reduce((s,x)=>s+(+x.totalAmount||0)-(+x.paidAmount||0),0);
+
+  // ── LONG-TERM LIABILITIES ──
+  const loansByCategory={};
+  (DB.loans||[]).forEach(l=>{
+    const cat=l.category||'Other';
+    if(!loansByCategory[cat])loansByCategory[cat]=0;
+    loansByCategory[cat]+=Math.max(0,(+l.principal||0)-(+l.paidAmount||0));
+  });
+  const totalLoans=(DB.loans||[]).reduce((s,l)=>s+Math.max(0,(+l.principal||0)-(+l.paidAmount||0)),0);
+  const totalLiabilities=apOutstanding+totalLoans;
+
+  // ── EQUITY ──
+  const equity=totalAssets-totalLiabilities;
+
+  function bsRow(label,value,bold=false,indent=false,isNeg=false){
+    return`<tr>
+      <td style="${indent?'padding-left:28px':'font-weight:600'}">${label}</td>
+      <td style="text-align:right;${bold?'font-weight:700':''}${isNeg&&value<0?';color:var(--danger)':''}">${value!==null?fmt(value):''}</td>
+    </tr>`;
+  }
+  function bsDivider(){return`<tr><td colspan="2"><hr style="margin:4px 0;border-color:var(--border)"></td></tr>`;}
+  function bsTotal(label,value,color=''){
+    return`<tr style="background:var(--bg-secondary)">
+      <td style="font-weight:700">${label}</td>
+      <td style="text-align:right;font-weight:700;${color?'color:'+color:''}">${fmt(value)}</td>
+    </tr>`;
+  }
+
+  const ppeRows=Object.entries(assetsByCategory).map(([cat,v])=>bsRow(cat,v.bookValue,false,true)).join('');
+  const loanRows=Object.entries(loansByCategory).map(([cat,v])=>bsRow(cat,v,false,true)).join('');
+
+  el.innerHTML=`
+  <div style="max-width:700px;margin:0 auto">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+          <div style="font-weight:700;font-size:18px">Balance Sheet</div>
+          <div style="color:var(--text-muted);font-size:13px">As of ${today.toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'})}</div>
+        </div>
+        <div style="font-size:13px;color:var(--text-muted)">${DB.settings.shopName||'Agrimaster Corporation'}</div>
+      </div>
+
+      <table style="width:100%">
+        <tbody>
+          <tr><td colspan="2" style="font-weight:700;font-size:15px;padding-top:8px;color:var(--primary)">ASSETS</td></tr>
+          <tr><td colspan="2" style="font-weight:600;padding-top:6px">Current Assets</td></tr>
+          ${bsRow('Cash & Cash Equivalents',Math.max(0,totalCash),false,true)}
+          ${bsRow('Accounts Receivable',ar,false,true)}
+          ${bsRow('Inventory',inventoryValue,false,true)}
+          ${bsDivider()}
+          ${bsTotal('Total Current Assets',totalCurrentAssets,'var(--primary)')}
+
+          <tr><td colspan="2" style="font-weight:600;padding-top:12px">Non-Current Assets (PP&E)</td></tr>
+          ${ppeRows||bsRow('No assets recorded',null,false,true)}
+          ${bsRow('Less: Accumulated Depreciation',-totalAccDep,false,true,true)}
+          ${bsDivider()}
+          ${bsTotal('Total Non-Current Assets',totalNonCurrentAssets,'var(--primary)')}
+          ${bsDivider()}
+          ${bsTotal('TOTAL ASSETS',totalAssets,'var(--success)')}
+
+          <tr><td colspan="2" style="height:16px"></td></tr>
+          <tr><td colspan="2" style="font-weight:700;font-size:15px;padding-top:8px;color:var(--danger)">LIABILITIES</td></tr>
+          <tr><td colspan="2" style="font-weight:600;padding-top:6px">Current Liabilities</td></tr>
+          ${bsRow('Accounts Payable',apOutstanding,false,true)}
+          ${bsDivider()}
+          ${bsTotal('Total Current Liabilities',apOutstanding)}
+
+          <tr><td colspan="2" style="font-weight:600;padding-top:12px">Long-Term Liabilities</td></tr>
+          ${loanRows||bsRow('No liabilities recorded',null,false,true)}
+          ${bsDivider()}
+          ${bsTotal('Total Long-Term Liabilities',totalLoans)}
+          ${bsDivider()}
+          ${bsTotal('TOTAL LIABILITIES',totalLiabilities,'var(--danger)')}
+
+          <tr><td colspan="2" style="height:16px"></td></tr>
+          <tr><td colspan="2" style="font-weight:700;font-size:15px;padding-top:8px;color:var(--success)">EQUITY</td></tr>
+          ${bsRow("Owner's Equity",equity,false,true)}
+          ${bsDivider()}
+          ${bsTotal("TOTAL EQUITY",equity,equity>=0?'var(--success)':'var(--danger)')}
+          ${bsDivider()}
+          ${bsTotal('TOTAL LIABILITIES & EQUITY',totalLiabilities+equity,Math.abs((totalLiabilities+equity)-totalAssets)<1?'var(--success)':'var(--danger)')}
+        </tbody>
+      </table>
+      <div style="margin-top:16px;font-size:11px;color:var(--text-muted);text-align:center">
+        Auto-calculated from inventory, receivables, payables, assets, and loans. Cash is estimated from collections minus expenses.
+      </div>
     </div>
   </div>`;
 }
