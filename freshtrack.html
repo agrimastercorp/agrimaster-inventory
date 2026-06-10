@@ -5176,21 +5176,19 @@ function buildIncomeStatement(){
         // Break-even: Fixed costs / Gross margin % (requires gross margin > 0)
         const breakEven=grossMarginPct>0?(totalOpEx/(grossMarginPct/100)):null;
 
-        function metricCard(title,value,sub,color,hint){
-          return`<div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;padding:14px 16px;min-width:0">
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${title}</div>
-            <div style="font-size:22px;font-weight:800;color:${color};line-height:1.1">${value}</div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:3px">${sub}</div>
-            ${hint?`<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">${hint}</div>`:''}
-          </div>`;
-        }
         function pct(n,decimals=1){return`${n>=0?'':'-'}${Math.abs(n).toFixed(decimals)}%`;}
-        function scoreBar(pct,thresholds){
-          // thresholds: [bad, ok, good] — e.g. [0,10,25]
-          const color=pct<thresholds[0]?'var(--danger)':pct<thresholds[1]?'#f59e0b':pct<thresholds[2]?'#3b82f6':'var(--success)';
-          const width=Math.min(100,Math.max(0,pct));
-          return`<div style="height:4px;background:var(--border);border-radius:2px;margin-top:6px">
-            <div style="height:4px;width:${width}%;background:${color};border-radius:2px;transition:width .4s"></div>
+        function scoreBar(val,thresholds){
+          const c=val<thresholds[0]?'var(--danger)':val<thresholds[1]?'#f59e0b':val<thresholds[2]?'#3b82f6':'var(--success)';
+          const w=Math.min(100,Math.max(0,val));
+          return`<div style="height:4px;background:var(--border);border-radius:2px;margin-top:8px"><div style="height:4px;width:${w}%;background:${c};border-radius:2px"></div></div>`;
+        }
+        function metricCard(title,value,sub,color,hint,bar=''){
+          return`<div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;padding:14px 16px;min-width:0;display:flex;flex-direction:column">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:6px">${title}</div>
+            <div style="font-size:21px;font-weight:800;color:${color};line-height:1">${value}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${sub}</div>
+            ${hint?`<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">${hint}</div>`:''}
+            ${bar}
           </div>`;
         }
         return`
@@ -5199,14 +5197,14 @@ function buildIncomeStatement(){
             <span>📊</span> Key Financial Metrics
           </div>
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-            ${metricCard('Gross Profit Margin',pct(grossMarginPct),'Revenue after COGS',grossMarginPct>=30?'var(--success)':grossMarginPct>=15?'#f59e0b':'var(--danger)','Target: ≥ 30%')+scoreBar(grossMarginPct,[0,15,30])}
-            ${metricCard('Net Profit Margin',pct(netMarginPct),'Bottom-line profitability',netMarginPct>=10?'var(--success)':netMarginPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 10%')+scoreBar(netMarginPct,[0,5,10])}
-            ${metricCard('EBITDA',`₱ ${fmtN(Math.abs(ebitda))}`,'Operating cash earnings',ebitda>=0?'var(--success)':'var(--danger)','Excl. Depreciation')}
-            ${metricCard('EBITDA Margin',pct(ebitdaMarginPct),'EBITDA / Net Sales',ebitdaMarginPct>=15?'var(--success)':ebitdaMarginPct>=8?'#f59e0b':'var(--danger)','Target: ≥ 15%')+scoreBar(ebitdaMarginPct,[0,8,15])}
-            ${metricCard('Operating Income (EBIT)',`₱ ${fmtN(Math.abs(operatingIncome))}`,'Before interest',operatingIncome>=0?'var(--success)':'var(--danger)',operatingIncome<0?'Operating at a loss':'')}
-            ${metricCard('ROI (on OpEx)',pct(roiPct),'Net Income / Total OpEx',roiPct>=15?'var(--success)':roiPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 15%')+scoreBar(roiPct,[0,5,15])}
-            ${metricCard('OpEx Ratio',pct(opExRatioPct),'Total OpEx / Net Sales',opExRatioPct<=50?'var(--success)':opExRatioPct<=70?'#f59e0b':'var(--danger)','Lower is better')+scoreBar(100-opExRatioPct,[0,30,50])}
-            ${breakEven!==null?metricCard('Break-Even Sales',`₱ ${fmtN(breakEven)}`,'To cover all OpEx','var(--primary)','Based on current margins'):''}
+            ${metricCard('Gross Profit Margin',pct(grossMarginPct),'Revenue after COGS',grossMarginPct>=30?'var(--success)':grossMarginPct>=15?'#f59e0b':'var(--danger)','Target: ≥ 30%',scoreBar(grossMarginPct,[0,15,30]))}
+            ${metricCard('Net Profit Margin',pct(netMarginPct),'Bottom-line profitability',netMarginPct>=10?'var(--success)':netMarginPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 10%',scoreBar(netMarginPct,[0,5,10]))}
+            ${metricCard('EBITDA',`₱ ${fmtN(Math.abs(ebitda))}`,'Excl. depreciation',ebitda>=0?'var(--success)':'var(--danger)','Operating cash earnings')}
+            ${metricCard('EBITDA Margin',pct(ebitdaMarginPct),'EBITDA / Net Sales',ebitdaMarginPct>=15?'var(--success)':ebitdaMarginPct>=8?'#f59e0b':'var(--danger)','Target: ≥ 15%',scoreBar(ebitdaMarginPct,[0,8,15]))}
+            ${metricCard('Operating Income (EBIT)',`₱ ${fmtN(Math.abs(operatingIncome))}`,'Before interest & tax',operatingIncome>=0?'var(--success)':'var(--danger)',operatingIncome<0?'⚠ Operating at a loss':'After all operating costs')}
+            ${metricCard('ROI (on OpEx)',pct(roiPct),'Net Income / Total OpEx',roiPct>=15?'var(--success)':roiPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 15%',scoreBar(roiPct,[0,5,15]))}
+            ${metricCard('OpEx Ratio',pct(opExRatioPct),'Total OpEx / Net Sales',opExRatioPct<=50?'var(--success)':opExRatioPct<=70?'#f59e0b':'var(--danger)','Lower is better',scoreBar(100-opExRatioPct,[0,30,50]))}
+            ${breakEven!==null?metricCard('Break-Even Sales',`₱ ${fmtN(breakEven)}`,'To cover all OpEx','var(--primary)','Based on current margins'):'<div></div>'}
           </div>
         </div>`;
       })()}
