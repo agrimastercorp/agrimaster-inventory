@@ -4046,6 +4046,25 @@ function renderPnLContent(el){
     if(!monthly[ym])monthly[ym]={revenue:0,cogs:0,expenses:0,spoilage:0};
     monthly[ym].spoilage+=(+s.loss||0);
   });
+  // Add monthly depreciation to each month bucket
+  const todayForDep=new Date();
+  (DB.assets||[]).forEach(asset=>{
+    if(!asset.usefulLife||!asset.cost||!asset.purchaseDate)return;
+    const salvage=+asset.salvageValue||0;
+    const cost=+asset.cost||0;
+    const yrs=+asset.usefulLife||1;
+    const annualDep=(cost-salvage)/yrs;
+    const monthlyDep=annualDep/12;
+    const purchaseDate=new Date(asset.purchaseDate);
+    const endOfLife=new Date(purchaseDate);
+    endOfLife.setFullYear(endOfLife.getFullYear()+yrs);
+    Object.keys(monthly).forEach(ym=>{
+      const ymDate=new Date(ym+'-15');
+      if(ymDate<purchaseDate||ymDate>endOfLife)return;
+      monthly[ym].depreciation=(monthly[ym].depreciation||0)+monthlyDep;
+    });
+  });
+
   const months=Object.keys(monthly).sort().reverse();
 
   // ── Daily rows (sales only for itemized; expenses/spoilage go to day totals) ──
@@ -4083,11 +4102,12 @@ function renderPnLContent(el){
     <div class="card-header"><span class="card-title">📅 Monthly P&amp;L Summary</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Month</th><th>Revenue</th><th>COGS</th><th>Gross Profit</th><th>Expenses</th><th>Spoilage Loss</th><th>Net Profit</th><th>Margin</th></tr></thead>
+        <thead><tr><th>Month</th><th>Revenue</th><th>COGS</th><th>Gross Profit</th><th>Expenses</th><th>Spoilage</th><th>Depreciation</th><th>Net Profit</th><th>Margin</th></tr></thead>
         <tbody>${months.map(ym=>{
           const g=monthly[ym];
           const gross=g.revenue-g.cogs;
-          const net=gross-g.expenses-g.spoilage;
+          const dep=g.depreciation||0;
+          const net=gross-g.expenses-g.spoilage-dep;
           const margin=g.revenue?((net/g.revenue)*100).toFixed(1):0;
           return`<tr>
             <td class="fw-bold">${ym}</td>
@@ -4095,10 +4115,11 @@ function renderPnLContent(el){
             <td class="text-green fw-bold">${fmt(gross)}</td>
             <td class="text-red">${fmt(g.expenses)}</td>
             <td class="text-red">${fmt(g.spoilage)}</td>
+            <td class="text-red">${dep>0?fmt(dep):'—'}</td>
             <td class="${net>=0?'text-green':'text-red'} fw-bold">${fmt(net)}</td>
             <td>${margin}%</td>
           </tr>`;
-        }).join('')||'<tr><td colspan="8"><div class="empty-state"><div class="icon">📈</div><h3>No data yet</h3></div></td></tr>'}
+        }).join('')||'<tr><td colspan="9"><div class="empty-state"><div class="icon">📈</div><h3>No data yet</h3></div></td></tr>'}
         </tbody>
       </table>
     </div>
@@ -4983,11 +5004,12 @@ function buildIncomeStatement(){
     return dateStr.slice(0,7)===`${year}-${month}`;
   }
 
-  // ── REVENUE ──
+  // ── REVENUE ── (StockOut records use paymentType, not paymentMethod)
   const salesOut=(DB.stockOut||[]).filter(s=>inPeriod(s.date));
   const grossSales=salesOut.reduce((s,x)=>s+(+x.totalRevenue||0),0);
-  const cashSales=salesOut.filter(x=>x.paymentMethod==='cash'||x.paymentMethod==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0);
-  const creditSales=salesOut.filter(x=>x.paymentMethod==='credit').reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const cashSales=salesOut.filter(x=>x.paymentType==='cash').reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const gcashSales=salesOut.filter(x=>x.paymentType==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0);
+  const creditSales=salesOut.filter(x=>x.paymentType==='credit').reduce((s,x)=>s+(+x.totalRevenue||0),0);
 
   // Sales deductions (from payment collections in period)
   const salesDeductions=(DB.payments||[]).filter(p=>inPeriod(p.date))
@@ -4995,21 +5017,20 @@ function buildIncomeStatement(){
   const netSales=grossSales-salesDeductions;
 
   // ── COGS ──
-  // Beginning Inventory: estimated value of stock on hand at period start
-  const beginningInventory=(DB.stockIn||[])
-    .filter(s=>s.date<periodStart)
-    .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
-
-  // Purchases during period (total cost of all stock-in entries)
+  // Purchases during period (total cost of all stock-in entries in period)
   const totalPurchases=(DB.stockIn||[]).filter(s=>inPeriod(s.date))
     .reduce((s,b)=>s+(+b.totalCost||0),0);
 
-  // Ending Inventory: current remaining value of all stock on hand
+  // Ending Inventory: current remaining value of all stock on hand (at cost, FIFO)
   const endingInventory=(DB.stockIn||[])
     .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
 
-  // COGS from FIFO (actual cost assigned to sold units)
+  // COGS from FIFO — actual cost deducted per sale (most accurate)
   const cogs=salesOut.reduce((s,x)=>s+(+x.cogs||0),0);
+
+  // Beginning Inventory derived from accounting equation: BI = COGS + EI − Purchases
+  // This keeps the traditional formula section self-consistent with the FIFO COGS figure
+  const beginningInventory=Math.max(0, cogs + endingInventory - totalPurchases);
   const grossProfit=netSales-cogs;
   const grossMargin=netSales?((grossProfit/netSales)*100).toFixed(1):0;
 
@@ -5115,6 +5136,7 @@ function buildIncomeStatement(){
           ${isSectionHeader('I. Revenue')}
           ${isRow('Gross Sales',grossSales,1,true)}
           ${isRow('  Cash Sales',cashSales,2)}
+          ${isRow('  GCash Sales',gcashSales,2)}
           ${isRow('  Credit Sales',creditSales,2)}
           ${salesDeductions>0?isRow('Less: Sales Deductions',-salesDeductions,1):''}
           ${iDivider()}
@@ -5169,8 +5191,20 @@ function buildIncomeStatement(){
         const grossMarginPct=netSales?(grossProfit/netSales*100):0;
         const netMarginPct=netSales?(netIncome/netSales*100):0;
         const ebitdaMarginPct=netSales?(ebitda/netSales*100):0;
-        // ROI = Net Income / Total Operating Expenses (return on cost invested in operations)
-        const roiPct=totalOpEx?(netIncome/totalOpEx*100):0;
+        // ROA = Net Income / Total Assets (standard Return on Assets)
+        const totalAssetsForROA=(()=>{
+          const inv=(DB.stockIn||[]).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
+          const ar=(DB.customers||[]).reduce((s,c)=>s+(+c.balance||0),0);
+          const ppe=(DB.assets||[]).reduce((a,asset)=>{
+            if(!asset.usefulLife||!asset.cost)return a+(+asset.cost||0);
+            const salvage=+asset.salvageValue||0; const cost=+asset.cost||0; const yrs=+asset.usefulLife||1;
+            const annDep=(cost-salvage)/yrs;
+            const elapsed=(new Date()-new Date(asset.purchaseDate||new Date()))/(1000*60*60*24*365.25);
+            return a+Math.max(salvage,cost-Math.min(cost-salvage,annDep*elapsed));
+          },0);
+          return inv+ar+ppe;
+        })();
+        const roaPct=totalAssetsForROA?(netIncome/totalAssetsForROA*100):0;
         // Operating expense ratio
         const opExRatioPct=netSales?(totalOpEx/netSales*100):0;
         // Break-even: Fixed costs / Gross margin % (requires gross margin > 0)
@@ -5202,7 +5236,7 @@ function buildIncomeStatement(){
             ${metricCard('EBITDA',`₱ ${fmtN(Math.abs(ebitda))}`,'Excl. depreciation',ebitda>=0?'var(--success)':'var(--danger)','Operating cash earnings')}
             ${metricCard('EBITDA Margin',pct(ebitdaMarginPct),'EBITDA / Net Sales',ebitdaMarginPct>=15?'var(--success)':ebitdaMarginPct>=8?'#f59e0b':'var(--danger)','Target: ≥ 15%',scoreBar(ebitdaMarginPct,[0,8,15]))}
             ${metricCard('Operating Income (EBIT)',`₱ ${fmtN(Math.abs(operatingIncome))}`,'Before interest & tax',operatingIncome>=0?'var(--success)':'var(--danger)',operatingIncome<0?'⚠ Operating at a loss':'After all operating costs')}
-            ${metricCard('ROI (on OpEx)',pct(roiPct),'Net Income / Total OpEx',roiPct>=15?'var(--success)':roiPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 15%',scoreBar(roiPct,[0,5,15]))}
+            ${metricCard('Return on Assets (ROA)',pct(roaPct),'Net Income / Total Assets',roaPct>=10?'var(--success)':roaPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 10%',scoreBar(roaPct,[0,5,10]))}
             ${metricCard('OpEx Ratio',pct(opExRatioPct),'Total OpEx / Net Sales',opExRatioPct<=50?'var(--success)':opExRatioPct<=70?'#f59e0b':'var(--danger)','Lower is better',scoreBar(100-opExRatioPct,[0,30,50]))}
             ${breakEven!==null?metricCard('Break-Even Sales',`₱ ${fmtN(breakEven)}`,'To cover all OpEx','var(--primary)','Based on current margins'):'<div></div>'}
           </div>
@@ -5248,7 +5282,7 @@ function renderBalanceSheet(el){
   // ── CURRENT ASSETS ──
   // Cash: inflows minus outflows
   const cashSalesIn=(DB.stockOut||[])
-    .filter(s=>s.paymentMethod==='cash'||s.paymentMethod==='gcash')
+    .filter(s=>s.paymentType==='cash'||s.paymentType==='gcash')
     .reduce((s,x)=>s+(+x.totalRevenue||0),0);
   const creditCollections=(DB.payments||[])
     .reduce((s,p)=>s+(+p.netAmount||+p.amount||0),0); // use net after deductions
