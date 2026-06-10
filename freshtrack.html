@@ -4603,7 +4603,7 @@ async function checkPendingFromGAS(){
     if(!r.username)return false;
     if(seen[r.username]){
       // Delete the older duplicate from GAS
-      await gasPost({action:'delete',sheet:'PendingUsers',data:{id:seen[r.username].id}});
+      gasPost({action:'delete',sheet:'PendingUsers',data:{id:seen[r.username].id}});
       seen[r.username]=r; // keep latest
       return true;
     }
