@@ -5198,7 +5198,7 @@ function buildIncomeStatement(){
           <div style="font-weight:700;font-size:13px;margin-bottom:12px;display:flex;align-items:center;gap:6px">
             <span>📊</span> Key Financial Metrics
           </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
             ${metricCard('Gross Profit Margin',pct(grossMarginPct),'Revenue after COGS',grossMarginPct>=30?'var(--success)':grossMarginPct>=15?'#f59e0b':'var(--danger)','Target: ≥ 30%')+scoreBar(grossMarginPct,[0,15,30])}
             ${metricCard('Net Profit Margin',pct(netMarginPct),'Bottom-line profitability',netMarginPct>=10?'var(--success)':netMarginPct>=5?'#f59e0b':'var(--danger)','Target: ≥ 10%')+scoreBar(netMarginPct,[0,5,10])}
             ${metricCard('EBITDA',`₱ ${fmtN(Math.abs(ebitda))}`,'Operating cash earnings',ebitda>=0?'var(--success)':'var(--danger)','Excl. Depreciation')}
