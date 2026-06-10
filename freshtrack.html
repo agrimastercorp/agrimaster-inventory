@@ -4996,8 +4996,9 @@ function buildIncomeStatement(){
   if(!body)return;
 
   const periodStart=month==='all'?`${year}-01-01`:`${year}-${month}-01`;
-  // Use actual last day of month (avoids Apr/Jun/Sep/Nov/Feb day-31 parse errors)
-  const periodEnd=month==='all'?`${year}-12-31`:new Date(+year,+month,0).toISOString().slice(0,10);
+  // Use actual last day of month — avoid toISOString() which shifts date in UTC+8
+  const periodEnd=month==='all'?`${year}-12-31`
+    :`${year}-${month}-${String(new Date(+year,+month,0).getDate()).padStart(2,'0')}`;
 
   function inPeriod(dateStr){
     if(!dateStr)return false;
@@ -5012,10 +5013,16 @@ function buildIncomeStatement(){
   const gcashSales=salesOut.filter(x=>x.paymentType==='gcash').reduce((s,x)=>s+(+x.totalRevenue||0),0);
   const creditSales=salesOut.filter(x=>x.paymentType==='credit').reduce((s,x)=>s+(+x.totalRevenue||0),0);
 
-  // Sales deductions (from payment collections in period)
-  const salesDeductions=(DB.payments||[]).filter(p=>inPeriod(p.date))
+  // EWT withheld by clients (1% of credit sales, deducted at point of sale)
+  const ewtWithheld=salesOut.filter(x=>x.paymentType==='credit')
+    .reduce((s,x)=>s+(+x.ewt||0),0);
+
+  // Other sales deductions (from payment collection records)
+  const paymentDeductions=(DB.payments||[]).filter(p=>inPeriod(p.date))
     .reduce((s,p)=>s+(+p.totalDeductions||0),0);
-  const netSales=grossSales-salesDeductions;
+
+  const totalSalesDeductions=ewtWithheld+paymentDeductions;
+  const netSales=grossSales-totalSalesDeductions;
 
   // ── COGS ──
   // Purchases during period (total cost of all stock-in entries in period)
@@ -5145,7 +5152,8 @@ function buildIncomeStatement(){
           ${isRow('  Cash Sales',cashSales,2)}
           ${isRow('  GCash Sales',gcashSales,2)}
           ${isRow('  Credit Sales',creditSales,2)}
-          ${salesDeductions>0?isRow('Less: Sales Deductions',-salesDeductions,1):''}
+          ${ewtWithheld>0?isRow('Less: EWT Withheld by Clients (1%)',-ewtWithheld,1):''}
+          ${paymentDeductions>0?isRow('Less: Other Sales Deductions',-paymentDeductions,1):''}
           ${iDivider()}
           ${isTotalRow('Net Sales',netSales,'var(--primary)')}
 
@@ -5258,7 +5266,7 @@ function buildIncomeStatement(){
         • COGS calculated using FIFO (First-In, First-Out) method based on actual cost of sold units.<br>
         • Depreciation computed on straight-line basis; only active assets within useful life are included.<br>
         • Interest expense based on outstanding loan balance × stated annual interest rate.<br>
-        • Sales deductions (withholding tax, damaged goods, etc.) deducted from gross sales.<br>
+        • EWT (1% creditable withholding tax) deducted by clients is shown as contra-revenue and recorded as a prepaid tax asset on the Balance Sheet.<br>
         • Beginning inventory derived from accounting equation (BI = COGS + Ending Inventory − Purchases) to ensure the COGS schedule is self-consistent with FIFO.
       </div>
     </div>
@@ -5310,13 +5318,17 @@ function renderBalanceSheet(el){
   const totalCash=cashSalesIn+creditCollections+loanProceeds
     -cashExpenses-cashStockPurchases-apPaymentsMade-loanRepayments;
 
-  // Accounts Receivable (unpaid credit sales)
+  // Accounts Receivable (unpaid credit sales, already net of EWT)
   const ar=(DB.customers||[]).reduce((s,c)=>s+(+c.balance||0),0);
+
+  // Creditable Withholding Tax (EWT deducted by clients — prepaid income tax asset)
+  const ewtTaxCredit=(DB.stockOut||[]).filter(s=>s.paymentType==='credit')
+    .reduce((s,x)=>s+(+x.ewt||0),0);
 
   // Inventory value (remaining qty × cost per unit using FIFO batches)
   const inventoryValue=(DB.stockIn||[]).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
 
-  const totalCurrentAssets=totalCash+ar+inventoryValue;
+  const totalCurrentAssets=totalCash+ar+ewtTaxCredit+inventoryValue;
 
   // ── NON-CURRENT ASSETS (PP&E) ──
   function calcBookValue(a){
@@ -5392,7 +5404,8 @@ function renderBalanceSheet(el){
           <tr><td colspan="2" style="font-weight:700;font-size:15px;padding-top:8px;color:var(--primary)">ASSETS</td></tr>
           <tr><td colspan="2" style="font-weight:600;padding-top:6px">Current Assets</td></tr>
           ${bsRow('Cash & Cash Equivalents',Math.max(0,totalCash),false,true)}
-          ${bsRow('Accounts Receivable',ar,false,true)}
+          ${bsRow('Accounts Receivable (net of EWT)',ar,false,true)}
+          ${ewtTaxCredit>0?bsRow('Creditable Withholding Tax (EWT)',ewtTaxCredit,false,true):''}
           ${bsRow('Inventory',inventoryValue,false,true)}
           ${bsDivider()}
           ${bsTotal('Total Current Assets',totalCurrentAssets,'var(--primary)')}
