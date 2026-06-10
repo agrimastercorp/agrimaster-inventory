@@ -483,7 +483,7 @@ async function submitSignup(){
   }
 }
 
-function approveSignup(id){
+async function approveSignup(id){
   if(!DB.settings.pendingUsers)return;
   const req=DB.settings.pendingUsers.find(u=>u.id===id);
   if(!req)return;
@@ -494,22 +494,22 @@ function approveSignup(id){
   DB.settings.pendingUsers=DB.settings.pendingUsers.filter(u=>u.id!==id);
   saveDB();
   // Delete from GAS PendingUsers so it doesn't reappear
-  gasPost({action:'delete',sheet:'PendingUsers',data:{id}});
+  await gasPost({action:'delete',sheet:'PendingUsers',data:{id}});
   // Save updated users list to GAS so approved account works on all devices
-  gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users}});
+  await gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users}});
   logActivity('Approve Signup',`Approved account: ${req.username}`);
   showToast(`Account approved for ${req.display}`,'success');
   renderPage('setup');
 }
 
-function rejectSignup(id){
+async function rejectSignup(id){
   if(!DB.settings.pendingUsers)return;
   const req=DB.settings.pendingUsers.find(u=>u.id===id);
   if(!req||!confirm(`Reject account request from "${req.display}" (@${req.username})?`))return;
   DB.settings.pendingUsers=DB.settings.pendingUsers.filter(u=>u.id!==id);
   saveDB();
   // Delete from GAS so it doesn't reappear on next sync
-  gasPost({action:'delete',sheet:'PendingUsers',data:{id}});
+  await gasPost({action:'delete',sheet:'PendingUsers',data:{id}});
   logActivity('Reject Signup',`Rejected request: ${req.username}`);
   showToast('Request rejected','warning');
   renderPage('setup');
@@ -1608,7 +1608,7 @@ async function deleteStockIn(id){
     const linked=DB.accountsPayable.find(a=>a.sourceStockInId===id&&a.status==='unpaid');
     if(linked){
       DB.accountsPayable=DB.accountsPayable.filter(a=>a.id!==linked.id);
-      gasPost({action:'delete',sheet:'AccountsPayable',data:{id:linked.id}});
+      await gasPost({action:'delete',sheet:'AccountsPayable',data:{id:linked.id}});
       showToast('Linked Accounts Payable entry also removed','success');
     }
   }
@@ -3157,7 +3157,7 @@ function epAddRow(){
   document.getElementById('ep-invoice-list').appendChild(div);
 }
 
-function saveEditPayment(pid){
+async function saveEditPayment(pid){
   const p=DB.payments.find(x=>x.id===pid);
   if(!p)return;
   const oldAmount=+p.amount||0;
@@ -3173,14 +3173,14 @@ function saveEditPayment(pid){
   p.checkNumber=document.getElementById('ep-check')?.value.trim()||'';
   p.invoiceNumbers=[...document.querySelectorAll('.pay-inv-input')].map(i=>i.value.trim()).filter(Boolean);
   saveDB();
-  gasPost({action:'update',sheet:'Payments',data:p});
-  if(c) gasPost({action:'updateBalance',sheet:'Customers',data:{id:c.id,balance:c.balance}});
+  await gasPost({action:'update',sheet:'Payments',data:p});
+  if(c) await gasPost({action:'updateBalance',sheet:'Customers',data:{id:c.id,balance:c.balance}});
   closeModal();
   showToast('Payment updated','success');
   renderPage('utang');
 }
 
-function deletePayment(pid){
+async function deletePayment(pid){
   const p=DB.payments.find(x=>x.id===pid);
   if(!p)return;
   const c=DB.customers.find(x=>x.id===p.customerId);
@@ -3189,8 +3189,8 @@ function deletePayment(pid){
   if(c) c.balance=(+c.balance||0)+(+p.amount||0);
   DB.payments=DB.payments.filter(x=>x.id!==pid);
   saveDB();
-  gasPost({action:'delete',sheet:'Payments',data:{id:pid}});
-  if(c) gasPost({action:'updateBalance',sheet:'Customers',data:{id:c.id,balance:c.balance}});
+  await gasPost({action:'delete',sheet:'Payments',data:{id:pid}});
+  if(c) await gasPost({action:'updateBalance',sheet:'Customers',data:{id:c.id,balance:c.balance}});
   logActivity('delete_payment',`Deleted payment ${fmt(p.amount)} from ${c?c.name:'unknown'}`);
   showToast('Payment deleted','warning');
   renderPage('utang');
@@ -3307,7 +3307,7 @@ function editExpense(id){
   </div>`);
 }
 
-function saveEditExpense(id){
+async function saveEditExpense(id){
   const e=DB.expenses.find(x=>x.id===id);
   if(!e)return;
   const amount=+document.getElementById('ex-amount').value;
@@ -3319,7 +3319,7 @@ function saveEditExpense(id){
   const eCatVal=document.getElementById('ex-category').value;
   e.category=eCatVal==='Other'?(document.getElementById('ex-other')?.value.trim()||'Other'):eCatVal;
   saveDB();
-  gasPost({action:'update',sheet:'Expenses',data:e});
+  await gasPost({action:'update',sheet:'Expenses',data:e});
   closeModal();
   showToast('Expense updated','success');
   renderPage('expenses');
@@ -4567,7 +4567,7 @@ function renderSetupContent(el){
   </div>`;
 }
 
-function saveSettings(){
+async function saveSettings(){
   DB.settings.shopName=document.getElementById('set-name').value.trim()||'Agrimaster Corporation';
   if(document.getElementById('set-gas'))DB.settings.gasUrl=document.getElementById('set-gas').value.trim();
   if(document.getElementById('set-apikey'))DB.settings.apiKey=document.getElementById('set-apikey').value.trim();
@@ -4575,7 +4575,7 @@ function saveSettings(){
   saveDB();
   document.getElementById('shop-name-display').textContent=DB.settings.shopName;
   // Push users list to GAS so all devices get updated accounts
-  gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName,users:getUsers()}});
+  await gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName,users:getUsers()}});
   showToast('Settings saved','success');
 }
 
@@ -4603,7 +4603,7 @@ async function checkPendingFromGAS(){
     if(!r.username)return false;
     if(seen[r.username]){
       // Delete the older duplicate from GAS
-      gasPost({action:'delete',sheet:'PendingUsers',data:{id:seen[r.username].id}});
+      await gasPost({action:'delete',sheet:'PendingUsers',data:{id:seen[r.username].id}});
       seen[r.username]=r; // keep latest
       return true;
     }
@@ -4756,7 +4756,7 @@ function toggleAllReports(cb){
   document.querySelectorAll('#um-report-list input[name="rpt"]').forEach(x=>x.checked=cb.checked);
 }
 
-function saveUserModal(uid){
+async function saveUserModal(uid){
   const users=getUsers();
   const username=document.getElementById('um-username').value.trim().toLowerCase();
   const display=document.getElementById('um-display').value.trim();
@@ -4786,13 +4786,13 @@ function saveUserModal(uid){
   }
   DB.settings.users=users;
   saveDB();
-  gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users}});
+  await gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users}});
   closeModal();
   refreshUserMgmt();
   showToast(isNew?'User added successfully':'User updated successfully','success');
 }
 
-function deleteUser(uid){
+async function deleteUser(uid){
   const users=getUsers();
   const u=users.find(x=>(x.id||x.username)===uid);
   if(!u){showToast('User not found','error');return;}
@@ -4801,7 +4801,7 @@ function deleteUser(uid){
   const updated=users.filter(x=>(x.id||x.username)!==uid);
   DB.settings.users=updated;
   saveDB();
-  gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users:updated}});
+  await gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users:updated}});
   refreshUserMgmt();
   logActivity('delete_user',`Deleted user: ${u.username}`);
   showToast('User deleted','warning');
