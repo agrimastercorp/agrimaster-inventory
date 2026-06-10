@@ -1018,7 +1018,6 @@ function renderStockIn(el,actions){
       return`<tr>
         <td>${fmtDate(s.date)}</td>
         <td>${supplierName(s.supplierId)}</td>
-        <td>${p?.commodity||'—'}</td>
         <td class="fw-bold">${p?.name||s.productId}</td>
         <td><span class="badge ${isFruit?'badge-orange':'badge-green'}">${purchasedStr}</span></td>
         <td class="fw-bold">${totalLabel}</td>
@@ -1038,7 +1037,7 @@ function renderStockIn(el,actions){
   }
 
   const thead=`<thead><tr>
-    <th>Date</th><th>Supplier</th><th>Commodity</th><th>Product</th>
+    <th>Date</th><th>Supplier</th><th>Product</th>
     <th>Purchased</th><th>Total kg</th><th>Cost/kg</th><th>Cost/Pkg</th>
     <th>Total Cost</th><th>Payment</th><th>Expiry</th><th>Remaining</th><th>Staff</th><th>Actions</th>
   </tr></thead>`;
@@ -3905,9 +3904,13 @@ function renderCashSummary(el){
 //  P&L SUMMARY
 // ─────────────────────────────────────────────
 function renderPnL(el){
-  // ── Owner-only password gate ──
-  if(SESSION.role!=='owner'){
-    el.innerHTML=`
+  // Owner always has access; staff with full report access ('all') or explicit nav_pnl permission can view directly
+  if(SESSION.role==='owner' || canAccessReport('nav_pnl')){
+    renderPnLContent(el);
+    return;
+  }
+  // ── Password gate for staff without explicit P&L report access ──
+  el.innerHTML=`
     <div style="display:flex;justify-content:center;align-items:center;min-height:60vh">
       <div class="card" style="max-width:360px;width:100%;text-align:center;padding:32px">
         <div style="font-size:48px;margin-bottom:12px">🔒</div>
@@ -3921,9 +3924,6 @@ function renderPnL(el){
         <div id="pnl-gate-error" style="display:none;color:var(--danger);font-size:12px;margin-top:8px">Incorrect password.</div>
       </div>
     </div>`;
-    return;
-  }
-  renderPnLContent(el);
 }
 
 function verifyPnLAccess(el){
