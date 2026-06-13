@@ -921,7 +921,8 @@ function showSaveConfirm(title, rows){
         <span>⚠</span> Are you sure you want to post this? This cannot be undone easily.
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button onclick="document.getElementById('save-confirm-overlay').remove();_pendingSaveFn=null;"
+        <button onclick="document.getElementById('save-confirm-overlay').remove();_pendingSaveFn=null;
+                   document.querySelectorAll('#modal-container .btn-primary').forEach(b=>{b.disabled=false;b.style.opacity='';b.style.pointerEvents='';})"
           style="padding:9px 20px;border-radius:8px;border:1.5px solid #e5e7eb;background:#fff;
                  font-weight:600;font-size:13px;cursor:pointer;color:#374151">
           ✕ Cancel
@@ -1031,17 +1032,17 @@ function confirmBeginInventory(){
 function confirmSupplier(id){
   _lockModalSaveBtn();
   const name=document.getElementById('sup-name')?.value?.trim()||'—';
-  const contact=document.getElementById('sup-contact')?.value?.trim()||'—';
   const phone=document.getElementById('sup-phone')?.value?.trim()||'—';
+  const loc=document.getElementById('sup-loc')?.value?.trim()||'—';
   _pendingSaveFn=()=>saveSupplier(id);
-  showSaveConfirm(id?'Edit Supplier':'Add Supplier',[ ['Name',name],['Contact Person',contact],['Phone',phone] ]);
+  showSaveConfirm(id?'Edit Supplier':'Add Supplier',[ ['Name',name],['Phone',phone],['Location',loc] ]);
 }
 
 function confirmCustomer(id){
   _lockModalSaveBtn();
-  const name=document.getElementById('cust-name')?.value?.trim()||'—';
-  const contact=document.getElementById('cust-contact')?.value?.trim()||'—';
-  const phone=document.getElementById('cust-phone')?.value?.trim()||'—';
+  const name=document.getElementById('cu-name')?.value?.trim()||'—';
+  const contact=document.getElementById('cu-contact-person')?.value?.trim()||'—';
+  const phone=document.getElementById('cu-phone')?.value?.trim()||'—';
   _pendingSaveFn=()=>saveCustomer(id);
   showSaveConfirm(id?'Edit Customer':'Add Customer',[ ['Name',name],['Contact Person',contact],['Phone',phone] ]);
 }
