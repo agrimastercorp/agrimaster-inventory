@@ -1054,6 +1054,71 @@ function _lockModalSaveBtn(){
   });
 }
 
+// ── BULK SELECT / DELETE ───────────────────────────────────────
+function updateBulkBar(){
+  const checked=[...document.querySelectorAll('.bulk-cb:checked')];
+  let bar=document.getElementById('bulk-delete-bar');
+  if(!bar){
+    bar=document.createElement('div');
+    bar.id='bulk-delete-bar';
+    bar.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);'+
+      'background:#1f2937;color:#fff;padding:12px 22px;border-radius:14px;display:none;'+
+      'align-items:center;gap:14px;z-index:9000;box-shadow:0 8px 36px rgba(0,0,0,.45);'+
+      'font-size:14px;font-weight:600;white-space:nowrap';
+    bar.innerHTML=
+      `<span id="bulk-count-label" style="color:#d1d5db"></span>
+       <button onclick="confirmBulkDelete()"
+         style="background:#dc2626;color:#fff;border:none;border-radius:8px;
+                padding:8px 18px;font-weight:700;font-size:13px;cursor:pointer">
+         🗑️ Delete Selected
+       </button>
+       <button onclick="clearBulkSelect()"
+         style="background:#374151;color:#d1d5db;border:none;border-radius:8px;
+                padding:8px 10px;font-size:15px;cursor:pointer;line-height:1">✕</button>`;
+    document.body.appendChild(bar);
+  }
+  if(checked.length===0){bar.style.display='none';return;}
+  bar.style.display='flex';
+  document.getElementById('bulk-count-label').textContent=
+    `${checked.length} item${checked.length>1?'s':''} selected`;
+}
+
+function clearBulkSelect(){
+  document.querySelectorAll('.bulk-cb').forEach(cb=>cb.checked=false);
+  document.querySelectorAll('.bulk-select-all').forEach(cb=>cb.checked=false);
+  const bar=document.getElementById('bulk-delete-bar');
+  if(bar)bar.style.display='none';
+}
+
+function toggleSelectAllCb(masterCb){
+  const table=masterCb.closest('table');
+  table.querySelectorAll('.bulk-cb').forEach(cb=>cb.checked=masterCb.checked);
+  updateBulkBar();
+}
+
+async function confirmBulkDelete(){
+  const checked=[...document.querySelectorAll('.bulk-cb:checked')];
+  if(!checked.length)return;
+  const groups={};
+  checked.forEach(cb=>{
+    const k=cb.dataset.sheet+'|'+cb.dataset.key;
+    if(!groups[k])groups[k]={sheet:cb.dataset.sheet,key:cb.dataset.key,ids:[]};
+    groups[k].ids.push(cb.dataset.id);
+  });
+  const total=checked.length;
+  if(!confirm(`Delete ${total} selected item${total>1?'s':''}?\n\nThis will permanently remove them from the system.`))return;
+  for(const g of Object.values(groups)){
+    DB[g.key]=DB[g.key].filter(x=>!g.ids.includes(x.id));
+    for(const id of g.ids){
+      await gasPost({action:'delete',sheet:g.sheet,data:{id}});
+    }
+  }
+  saveDB();
+  clearBulkSelect();
+  renderPage(currentPage);
+  showToast(`Deleted ${total} item${total>1?'s':''}`, 'success');
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  PAGE RENDERS
 // ═══════════════════════════════════════════════════════════════
@@ -1187,7 +1252,7 @@ function renderStockIn(el,actions){
   const all=rows;
 
   function siRows(list){
-    if(!list.length)return`<tr><td colspan="10"><div class="empty-state"><div class="icon">📦</div><h3>No entries yet</h3></div></td></tr>`;
+    if(!list.length)return`<tr><td colspan="14"><div class="empty-state"><div class="icon">📦</div><h3>No entries yet</h3></div></td></tr>`;
     return list.map(s=>{
       const p=DB.products.find(x=>x.id===s.productId);
       const isFruit=p?.type==='fruit';
@@ -1211,6 +1276,7 @@ function renderStockIn(el,actions){
       }
       const pmBadge=s.paymentMethod==='credit'?`<span class="badge" style="background:#fff7ed;color:#b45309;border:1px solid #f59e0b">🏦 Credit</span>`:s.paymentMethod==='gcash'?`<span class="badge badge-blue">📱 GCash</span>`:`<span class="badge badge-green">💵 Cash</span>`;
       return`<tr>
+        <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="StockIn" data-key="stockIn" onchange="updateBulkBar()"></td>
         <td>${fmtDate(s.date)}</td>
         <td>${supplierName(s.supplierId)}</td>
         <td class="fw-bold">${p?.name||s.productId}</td>
@@ -1232,6 +1298,7 @@ function renderStockIn(el,actions){
   }
 
   const thead=`<thead><tr>
+    <th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th>
     <th>Date</th><th>Supplier</th><th>Product</th>
     <th>Purchased</th><th>Total kg</th><th>Cost/kg</th><th>Cost/Pkg</th>
     <th>Total Cost</th><th>Payment</th><th>Expiry</th><th>Remaining</th><th>Staff</th><th>Actions</th>
@@ -2161,6 +2228,7 @@ function renderStockOut(el,actions){
       <table>
         <thead>
           <tr>
+            <th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th>
             <th>Date</th><th>Invoice #</th><th>PO #</th>
             <th>Product</th><th>Customer</th>
             <th>Qty</th><th>Price/Unit</th>
@@ -2181,6 +2249,7 @@ function renderStockOut(el,actions){
             : '<span class="badge badge-orange">🚚 Undelivered</span>';
           return`
           <tr>
+            <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="StockOut" data-key="stockOut" onchange="updateBulkBar()"></td>
             <td>${fmtDate(s.date)}</td>
             <td class="fw-bold">${s.invoiceNumber||'—'}</td>
             <td>${s.poNumber||'—'}</td>
@@ -2199,7 +2268,7 @@ function renderStockOut(el,actions){
               <button class="btn btn-danger btn-sm" onclick="deleteStockOut('${s.id}')">🗑️ Del</button>
             </td>
           </tr>`;
-        }).join('')||'<tr><td colspan="14"><div class="empty-state"><div class="icon">🛒</div><h3>No sales yet</h3><p>Record your first sale</p></div></td></tr>'}
+        }).join('')||'<tr><td colspan="15"><div class="empty-state"><div class="icon">🛒</div><h3>No sales yet</h3><p>Record your first sale</p></div></td></tr>'}
         </tbody>
       </table>
     </div>
@@ -2531,9 +2600,10 @@ function renderSpoilage(el,actions){
     <div class="card-header"><span class="card-title">Spoilage / Rejects</span><span class="tag">${DB.spoilage.length} entries</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>Unit</th><th>Reason</th><th>Loss (COGS)</th><th>Staff</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Date</th><th>Product</th><th>Qty</th><th>Unit</th><th>Reason</th><th>Loss (COGS)</th><th>Staff</th></tr></thead>
         <tbody>${rows.map(s=>`
           <tr>
+            <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="Spoilage" data-key="spoilage" onchange="updateBulkBar()"></td>
             <td>${fmtDate(s.date)}</td>
             <td>${productName(s.productId)}</td>
             <td>${s.qty}</td>
@@ -2541,7 +2611,7 @@ function renderSpoilage(el,actions){
             <td>${s.reason||'—'}</td>
             <td class="fw-bold text-red">${fmt(s.loss)}</td>
             <td><span class="tag">${s.staffUser||'—'}</span></td>
-          </tr>`).join('')||'<tr><td colspan="7"><div class="empty-state"><div class="icon">🗑️</div><h3>No spoilage records</h3></div></td></tr>'}
+          </tr>`).join('')||'<tr><td colspan="8"><div class="empty-state"><div class="icon">🗑️</div><h3>No spoilage records</h3></div></td></tr>'}
         </tbody>
       </table>
     </div>
@@ -2811,9 +2881,10 @@ function renderSuppliers(el,actions){
     <div class="card-header"><span class="card-title">Supplier Directory</span><span class="tag">${DB.suppliers.length} suppliers</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Name</th><th>Phone</th><th>Location</th><th>Bank</th><th>Account No.</th><th>Notes</th><th>Actions</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Name</th><th>Phone</th><th>Location</th><th>Bank</th><th>Account No.</th><th>Notes</th><th>Actions</th></tr></thead>
         <tbody>${DB.suppliers.map(s=>`
           <tr>
+            <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="Suppliers" data-key="suppliers" onchange="updateBulkBar()"></td>
             <td class="fw-bold">${s.name}</td>
             <td>${s.phone||'—'}</td>
             <td>${s.location||'—'}</td>
@@ -2824,7 +2895,7 @@ function renderSuppliers(el,actions){
               <button class="btn btn-secondary btn-sm" onclick='openSupplierForm(${JSON.stringify(s)})'>Edit</button>
               <button class="btn btn-danger btn-sm" onclick="deleteSupplier('${s.id}')">Del</button>
             </td>
-          </tr>`).join('')||'<tr><td colspan="7"><div class="empty-state"><div class="icon">🚛</div><h3>No suppliers yet</h3></div></td></tr>'}
+          </tr>`).join('')||'<tr><td colspan="8"><div class="empty-state"><div class="icon">🚛</div><h3>No suppliers yet</h3></div></td></tr>'}
         </tbody>
       </table>
     </div>
@@ -2880,9 +2951,10 @@ function renderCustomers(el,actions){
     <div class="card-header"><span class="card-title">Customer Accounts</span><span class="tag">${DB.customers.length} customers</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Name</th><th>Contact Person</th><th>Contact Number</th><th>Phone</th><th>Address</th><th>Actions</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Name</th><th>Contact Person</th><th>Contact Number</th><th>Phone</th><th>Address</th><th>Actions</th></tr></thead>
         <tbody>${DB.customers.map(c=>`
           <tr>
+            <td><input type="checkbox" class="bulk-cb" data-id="${c.id}" data-sheet="Customers" data-key="customers" onchange="updateBulkBar()"></td>
             <td class="fw-bold">${c.name}</td>
             <td>${c.contactPerson||'—'}</td>
             <td>${c.contactNumber||'—'}</td>
@@ -2892,7 +2964,7 @@ function renderCustomers(el,actions){
               <button class="btn btn-secondary btn-sm" onclick='openCustomerForm(${JSON.stringify(c)})'>Edit</button>
               <button class="btn btn-danger btn-sm" onclick="deleteCustomer('${c.id}')">Del</button>
             </td>
-          </tr>`).join('')||'<tr><td colspan="6"><div class="empty-state"><div class="icon">👥</div><h3>No customers yet</h3></div></td></tr>'}
+          </tr>`).join('')||'<tr><td colspan="7"><div class="empty-state"><div class="icon">👥</div><h3>No customers yet</h3></div></td></tr>'}
         </tbody>
       </table>
     </div>
@@ -3481,9 +3553,10 @@ function renderExpenses(el,actions){
     <div class="card-header"><span class="card-title">Expense Records</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th><th>Staff</th><th>Actions</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Date</th><th>Description</th><th>Category</th><th>Amount</th><th>Staff</th><th>Actions</th></tr></thead>
         <tbody>${DB.expenses.slice().reverse().map(e=>`
           <tr>
+            <td><input type="checkbox" class="bulk-cb" data-id="${e.id}" data-sheet="Expenses" data-key="expenses" onchange="updateBulkBar()"></td>
             <td>${fmtDate(e.date)}</td>
             <td>${e.description||'—'}</td>
             <td><span class="tag">${e.category||'General'}</span></td>
@@ -3493,7 +3566,7 @@ function renderExpenses(el,actions){
               <button class="btn btn-secondary btn-sm" onclick="editExpense('${e.id}')">Edit</button>
               <button class="btn btn-danger btn-sm" onclick="deleteExpense('${e.id}')">Del</button>
             </td>
-          </tr>`).join('')||'<tr><td colspan="6"><div class="empty-state"><div class="icon">💸</div><h3>No expenses yet</h3></div></td></tr>'}
+          </tr>`).join('')||'<tr><td colspan="7"><div class="empty-state"><div class="icon">💸</div><h3>No expenses yet</h3></div></td></tr>'}
         </tbody>
       </table>
     </div>
