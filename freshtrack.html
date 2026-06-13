@@ -888,6 +888,171 @@ function openModal(html){
 function closeModal(){document.getElementById('modal-container').innerHTML=''}
 function closeModalOutside(e){if(e.target===e.currentTarget)closeModal()}
 
+// ── SAVE CONFIRMATION OVERLAY ──────────────────────────────────
+// Shows on top of the open form — cancel keeps all data intact.
+// Confirm button disables itself immediately to block double-click.
+let _pendingSaveFn = null;
+
+function showSaveConfirm(title, rows){
+  document.getElementById('save-confirm-overlay')?.remove();
+  const el=document.createElement('div');
+  el.id='save-confirm-overlay';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center';
+  const rowsHTML=rows.map(([k,v])=>`
+    <tr>
+      <td style="padding:5px 14px 5px 0;color:var(--text-muted,#6b7280);font-size:13px;width:44%;vertical-align:top">${k}</td>
+      <td style="padding:5px 0;font-weight:600;font-size:13px;color:var(--text,#111827)">${v||'—'}</td>
+    </tr>`).join('');
+  el.innerHTML=`
+    <div style="background:#fff;border-radius:14px;padding:28px 32px;max-width:420px;width:92%;
+                box-shadow:0 24px 64px rgba(0,0,0,.35);border:1px solid #e5e7eb;font-family:inherit">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-size:22px">⚠️</span>
+        <div style="font-weight:800;font-size:16px;color:#111827">Confirm Transaction</div>
+      </div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:18px">
+        A transaction is about to be posted. Please verify the details below before confirming.
+      </div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin-bottom:20px">
+        <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${title}</div>
+        <table style="width:100%;border-collapse:collapse"><tbody>${rowsHTML}</tbody></table>
+      </div>
+      <div style="font-size:12px;color:#f59e0b;margin-bottom:16px;display:flex;align-items:center;gap:6px">
+        <span>⚠</span> Are you sure you want to post this? This cannot be undone easily.
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('save-confirm-overlay').remove();_pendingSaveFn=null;"
+          style="padding:9px 20px;border-radius:8px;border:1.5px solid #e5e7eb;background:#fff;
+                 font-weight:600;font-size:13px;cursor:pointer;color:#374151">
+          ✕ Cancel
+        </button>
+        <button id="save-confirm-btn"
+          onclick="const b=document.getElementById('save-confirm-btn');
+                   b.disabled=true;b.style.opacity='.6';b.textContent='Posting…';
+                   document.getElementById('save-confirm-overlay').remove();
+                   if(_pendingSaveFn){_pendingSaveFn();_pendingSaveFn=null;}"
+          style="padding:9px 20px;border-radius:8px;border:none;background:#16a34a;
+                 color:#fff;font-weight:700;font-size:13px;cursor:pointer">
+          ✓ Yes, Post It
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+// ── PER-TRANSACTION CONFIRM WRAPPERS ──────────────────────────
+function confirmStockIn(type){
+  _lockModalSaveBtn();
+  const product=document.getElementById('si-product')?.value?.trim()||'—';
+  const supplier=document.getElementById('si-supplier')?.options[document.getElementById('si-supplier')?.selectedIndex]?.text||'—';
+  const pm=document.querySelector('input[name="si-payment-method"]:checked')?.value||'cash';
+  const date=document.getElementById('si-date')?.value||'—';
+  // Try to get total cost from summary text
+  const summary=document.getElementById('si-summary-text')?.textContent||'';
+  const totalMatch=summary.match(/Total[^₱]*₱([0-9,\.]+)/i);
+  const total=totalMatch?'₱ '+totalMatch[1]:'(see form)';
+  _pendingSaveFn=()=>saveStockIn(type);
+  showSaveConfirm('Purchase (Stock In)',[ ['Product',product],['Supplier',supplier],['Date',date],['Payment',pm.toUpperCase()],['Total Cost',total] ]);
+}
+
+function confirmStockOut(){
+  _lockModalSaveBtn();
+  const sel=document.getElementById('so-product');
+  const product=sel?.options[sel?.selectedIndex]?.text||'—';
+  const custSel=document.getElementById('so-customer');
+  const customer=custSel?.options[custSel?.selectedIndex]?.text||'Walk-in';
+  const qty=document.getElementById('so-qty')?.value||'—';
+  const revenue=document.getElementById('so-revenue')?.value||'—';
+  const payment=document.getElementById('so-payment')?.value||'—';
+  const date=document.getElementById('so-date')?.value||'—';
+  _pendingSaveFn=()=>saveStockOut();
+  showSaveConfirm('Sale (Stock Out)',[ ['Product',product],['Customer',customer],['Qty',qty],['Total Revenue','₱ '+revenue],['Payment',payment.toUpperCase()],['Date',date] ]);
+}
+
+function confirmSpoilage(){
+  _lockModalSaveBtn();
+  const sel=document.getElementById('sp-product');
+  const product=sel?.options[sel?.selectedIndex]?.text||'—';
+  const qty=document.getElementById('sp-qty')?.value||'—';
+  const unit=document.getElementById('sp-unit')?.value||'';
+  const reason=document.getElementById('sp-reason')?.value||'—';
+  const date=document.getElementById('sp-date')?.value||'—';
+  _pendingSaveFn=()=>saveSpoilage();
+  showSaveConfirm('Spoilage Entry',[ ['Product',product],['Qty',`${qty} ${unit}`],['Reason',reason],['Date',date] ]);
+}
+
+function confirmPayment(customerId){
+  _lockModalSaveBtn();
+  const amount=document.getElementById('pay-amount')?.value||'0';
+  const date=document.getElementById('pay-date')?.value||'—';
+  const bank=document.getElementById('pay-bank')?.value||'—';
+  const check=document.getElementById('pay-check')?.value||'';
+  const c=DB.customers?.find(x=>x.id===customerId);
+  _pendingSaveFn=()=>savePayment(customerId);
+  showSaveConfirm('Payment Collection',[ ['Customer',c?.name||'—'],['Amount','₱ '+parseFloat(amount).toLocaleString('en-PH',{minimumFractionDigits:2})],['Date',date],['Bank / Mode',bank],check?['Check #',check]:null ].filter(Boolean));
+}
+
+function confirmExpense(){
+  _lockModalSaveBtn();
+  const amount=document.getElementById('ex-amount')?.value||'0';
+  const desc=document.getElementById('ex-desc')?.value||'—';
+  const cat=document.getElementById('ex-category')?.value||'—';
+  const date=document.getElementById('ex-date')?.value||'—';
+  _pendingSaveFn=()=>saveExpense();
+  showSaveConfirm('Expense Entry',[ ['Description',desc],['Category',cat],['Amount','₱ '+parseFloat(amount).toLocaleString('en-PH',{minimumFractionDigits:2})],['Date',date] ]);
+}
+
+function confirmAsset(id){
+  _lockModalSaveBtn();
+  const name=document.getElementById('ast-name')?.value||'—';
+  const cost=document.getElementById('ast-cost')?.value||'0';
+  const life=document.getElementById('ast-life')?.value||'—';
+  _pendingSaveFn=()=>saveAsset(id);
+  showSaveConfirm(id?'Edit Asset':'Add Asset',[ ['Asset Name',name],['Cost','₱ '+parseFloat(cost).toLocaleString('en-PH',{minimumFractionDigits:2})],['Useful Life',`${life} years`] ]);
+}
+
+function confirmLoan(id){
+  _lockModalSaveBtn();
+  const name=document.getElementById('loan-name')?.value||'—';
+  const principal=document.getElementById('loan-principal')?.value||'0';
+  const rate=document.getElementById('loan-rate')?.value||'0';
+  _pendingSaveFn=()=>saveLoan(id);
+  showSaveConfirm(id?'Edit Liability':'Add Liability',[ ['Name / Description',name],['Principal','₱ '+parseFloat(principal).toLocaleString('en-PH',{minimumFractionDigits:2})],['Interest Rate',`${rate}% per annum`] ]);
+}
+
+function confirmBeginInventory(){
+  _lockModalSaveBtn();
+  const rows=document.querySelectorAll('.begin-row');
+  const count=[...rows].filter(r=>r.querySelector('.begin-product')?.value).length;
+  _pendingSaveFn=()=>saveBeginInventory();
+  showSaveConfirm('Beginning Inventory',[ ['Rows to Post',`${count} item(s)`],['Note','Opening stock will be added to inventory'] ]);
+}
+
+function confirmSupplier(id){
+  _lockModalSaveBtn();
+  const name=document.getElementById('sup-name')?.value?.trim()||'—';
+  const contact=document.getElementById('sup-contact')?.value?.trim()||'—';
+  const phone=document.getElementById('sup-phone')?.value?.trim()||'—';
+  _pendingSaveFn=()=>saveSupplier(id);
+  showSaveConfirm(id?'Edit Supplier':'Add Supplier',[ ['Name',name],['Contact Person',contact],['Phone',phone] ]);
+}
+
+function confirmCustomer(id){
+  _lockModalSaveBtn();
+  const name=document.getElementById('cust-name')?.value?.trim()||'—';
+  const contact=document.getElementById('cust-contact')?.value?.trim()||'—';
+  const phone=document.getElementById('cust-phone')?.value?.trim()||'—';
+  _pendingSaveFn=()=>saveCustomer(id);
+  showSaveConfirm(id?'Edit Customer':'Add Customer',[ ['Name',name],['Contact Person',contact],['Phone',phone] ]);
+}
+
+// Immediately lock the modal's primary button to prevent multi-click while overlay loads
+function _lockModalSaveBtn(){
+  document.querySelectorAll('#modal-container .btn-primary').forEach(b=>{
+    b.disabled=true; b.style.opacity='.5'; b.style.pointerEvents='none';
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  PAGE RENDERS
 // ═══════════════════════════════════════════════════════════════
@@ -1255,7 +1420,7 @@ function openStockInForm(type='vegetable'){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" style="background:${headerColor}" onclick="saveStockIn('${type}')">💾 Save Purchase</button>
+      <button class="btn btn-primary" style="background:${headerColor}" onclick="confirmStockIn('${type}')">💾 Save Purchase</button>
     </div>
   </div>`);
 
@@ -2102,7 +2267,7 @@ function openStockOutForm(){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveStockOut()">Save Sale</button>
+      <button class="btn btn-primary" onclick="confirmStockOut()">Save Sale</button>
     </div>
   </div>`);
   soUpdatePrice();
@@ -2409,7 +2574,7 @@ function openSpoilageForm(){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-danger" onclick="saveSpoilage()">Record Spoilage</button>
+      <button class="btn btn-danger" onclick="confirmSpoilage()">Record Spoilage</button>
     </div>
   </div>`);
   // Pre-fill unit from first product
@@ -2680,7 +2845,7 @@ function openSupplierForm(data={}){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveSupplier('${data.id||''}')">Save</button>
+      <button class="btn btn-primary" onclick="confirmSupplier('${data.id||''}')">Save</button>
     </div>
   </div>`);
 }
@@ -2748,7 +2913,7 @@ function openCustomerForm(data={}){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveCustomer('${data.id||''}')">Save</button>
+      <button class="btn btn-primary" onclick="confirmCustomer('${data.id||''}')">Save</button>
     </div>
   </div>`);
 }
@@ -3103,7 +3268,7 @@ function openPaymentForm(customerId){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="savePayment('${customerId}')">Save Payment</button>
+      <button class="btn btn-primary" onclick="confirmPayment('${customerId}')">Save Payment</button>
     </div>
   </div>`);
   payToggleFields();
@@ -3354,7 +3519,7 @@ function openExpenseForm(){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveExpense()">Save</button>
+      <button class="btn btn-primary" onclick="confirmExpense()">Save</button>
     </div>
   </div>`);
 }
@@ -4725,7 +4890,7 @@ function openAssetModal(id){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveAsset('${id||''}')">💾 Save Asset</button>
+      <button class="btn btn-primary" onclick="confirmAsset('${id||''}')">💾 Save Asset</button>
     </div>
   </div>`);
   // Highlight selected category on open
@@ -4924,7 +5089,7 @@ function openLoanModal(id){
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveLoan('${id||''}')">💾 Save</button>
+      <button class="btn btn-primary" onclick="confirmLoan('${id||''}')">💾 Save</button>
     </div>
   </div>`);
   selectLoanCat(defaultCat);
@@ -5492,7 +5657,7 @@ function renderBalanceSheet(el){
 // ─────────────────────────────────────────────
 function renderBeginInventory(el, actions){
   actions.innerHTML=`<button class="btn btn-primary" onclick="addBeginRow()">+ Add Row</button>
-    <button class="btn btn-success" onclick="saveBeginInventory()" style="margin-left:8px">💾 Save All</button>`;
+    <button class="btn btn-success" onclick="confirmBeginInventory()" style="margin-left:8px">💾 Save All</button>`;
 
   const existing=(DB.stockIn||[]).filter(s=>s.isOpeningStock);
 
@@ -5510,7 +5675,7 @@ function renderBeginInventory(el, actions){
     </div>
     <div style="margin-top:12px;display:flex;gap:8px">
       <button class="btn btn-secondary" onclick="addBeginRow()">+ Add Row</button>
-      <button class="btn btn-success" onclick="saveBeginInventory()">💾 Save All</button>
+      <button class="btn btn-success" onclick="confirmBeginInventory()">💾 Save All</button>
     </div>
   </div>
   ${existing.length?`
