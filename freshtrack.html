@@ -471,17 +471,20 @@ async function submitSignup(){
   if(!display||!username||!password){errEl.textContent='All fields are required.';errEl.style.display='block';return;}
   if(username.length<3){errEl.textContent='Username must be at least 3 characters.';errEl.style.display='block';return;}
   if(password.length<4){errEl.textContent='Password must be at least 4 characters.';errEl.style.display='block';return;}
+  // Sync first so we have the latest pending/active users
+  if(btn){btn.textContent='Checking...';btn.disabled=true;}
+  await syncFromGAS();
+  if(btn){btn.textContent='Submit Request';btn.disabled=false;}
   const allUsers=getUsers();
-  if(allUsers.find(u=>u.username===username)){errEl.textContent='That username is already taken.';errEl.style.display='block';return;}
-  // Prevent duplicate submission from same device/session
-  const alreadySubmitted=sessionStorage.getItem('ft_pending_'+username);
-  if(alreadySubmitted){errEl.textContent='You already submitted a request for this username. Please wait for owner approval.';errEl.style.display='block';return;}
+  if(allUsers.find(u=>u.username===username)){errEl.textContent='That username is already taken by an active account.';errEl.style.display='block';return;}
+  // Check if there is already a PENDING (not yet reviewed) request for this username
+  const alreadyPending=(DB.settings.pendingUsers||[]).find(u=>u.username===username);
+  if(alreadyPending){errEl.textContent='You already have a pending request. Please wait for owner approval.';errEl.style.display='block';return;}
   const req={id:genId(),display,username,password,requestedAt:new Date().toISOString()};
   if(btn){btn.textContent='Sending...';btn.disabled=true;}
   const ok=await gasPost({action:'add',sheet:'PendingUsers',data:req});
   if(btn){btn.textContent='Submit Request';btn.disabled=false;}
   if(ok){
-    sessionStorage.setItem('ft_pending_'+username,'1');
     okEl.textContent='✅ Request sent! Please wait for owner approval.';
     okEl.style.display='block';
     document.getElementById('su-display').value='';
