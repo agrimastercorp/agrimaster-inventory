@@ -2951,14 +2951,13 @@ function renderCustomers(el,actions){
     <div class="card-header"><span class="card-title">Customer Accounts</span><span class="tag">${DB.customers.length} customers</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Name</th><th>Contact Person</th><th>Contact Number</th><th>Phone</th><th>Address</th><th>Actions</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Name</th><th>Contact Person</th><th>Contact Number</th><th>Address</th><th>Actions</th></tr></thead>
         <tbody>${DB.customers.map(c=>`
           <tr>
             <td><input type="checkbox" class="bulk-cb" data-id="${c.id}" data-sheet="Customers" data-key="customers" onchange="updateBulkBar()"></td>
             <td class="fw-bold">${c.name}</td>
             <td>${c.contactPerson||'—'}</td>
             <td>${c.contactNumber||'—'}</td>
-            <td>${c.phone||'—'}</td>
             <td>${c.address||'—'}</td>
             <td>
               <button class="btn btn-secondary btn-sm" onclick='openCustomerForm(${JSON.stringify(c)})'>Edit</button>
