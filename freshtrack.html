@@ -550,6 +550,7 @@ function loadDB(){
   if(!DB.settings.shopName||DB.settings.shopName==='FreshTrack')DB.settings.shopName='Agrimaster Corporation';
   if(!DB.assets)DB.assets=[];
   if(!DB.loans)DB.loans=[];
+  if(!DB.purchaseOrders)DB.purchaseOrders=[];
 
   deduplicateProducts();
 }
@@ -4451,6 +4452,27 @@ function generateBIR(){
 
 function printBIR(){window.print()}
 
+function printPO(id){
+  const po=(DB.purchaseOrders||[]).find(x=>x.id===id);
+  if(!po){showToast('Purchase order not found','error');return;}
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>PO #${po.poNumber}</title>
+  <style>body{font-family:Arial,sans-serif;margin:32px;color:#111}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th{background:#f3f4f6;padding:8px;text-align:left;border:1px solid #e5e7eb;font-size:12px}
+  td{padding:8px;border:1px solid #e5e7eb;font-size:12px}
+  h2{margin-bottom:4px}p{color:#6b7280;font-size:12px}</style></head><body>
+  <h2>Purchase Order #${po.poNumber}</h2>
+  <p>Supplier: <strong>${supplierName(po.supplierId)}</strong> &nbsp;|&nbsp; Date: ${fmtDate(po.date)} &nbsp;|&nbsp; Status: ${po.status||'draft'}</p>
+  <table><thead><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Est. Cost</th></tr></thead>
+  <tbody>${(po.items||[]).map(i=>`<tr><td>${productName(i.productId)}</td><td>${i.qty}</td><td>${i.unit||'pcs'}</td><td>₱ ${(+i.estCost||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</td></tr>`).join('')}</tbody>
+  </table>
+  ${po.notes?`<p style="margin-top:16px"><strong>Notes:</strong> ${po.notes}</p>`:''}
+  <script>window.onload=function(){window.print();}<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
 // ─────────────────────────────────────────────
 //  PURCHASE ORDERS
 // ─────────────────────────────────────────────
@@ -4748,14 +4770,16 @@ async function saveAsset(id){
   if(!name||!cost){showToast('Asset name and cost are required','error');return;}
   if(salvageValue>=cost){showToast('Salvage value must be less than cost','error');return;}
   if(!DB.assets)DB.assets=[];
+  let assetData;
   if(id){
     const a=DB.assets.find(x=>x.id===id);
-    if(a){Object.assign(a,{name,category,purchaseDate,cost,salvageValue,usefulLife,notes});}
+    if(a){Object.assign(a,{name,category,purchaseDate,cost,salvageValue,usefulLife,notes}); assetData=a;}
   } else {
-    DB.assets.push({id:genId(),name,category,purchaseDate,cost,salvageValue,usefulLife,notes});
+    assetData={id:genId(),name,category,purchaseDate,cost,salvageValue,usefulLife,notes};
+    DB.assets.push(assetData);
   }
   saveDB();
-  await gasPost({action:id?'update':'add',sheet:'Assets',data:DB.assets.find(x=>x.name===name&&x.purchaseDate===purchaseDate)||DB.assets[DB.assets.length-1]});
+  await gasPost({action:id?'update':'add',sheet:'Assets',data:assetData});
   logActivity(id?'Edit Asset':'Add Asset',`${name} — ${fmt(cost)}, ${usefulLife}yrs`);
   closeModal();
   showToast('Asset saved','success');
