@@ -1134,6 +1134,7 @@ async function confirmBulkDelete(){
 // ═══════════════════════════════════════════════════════════════
 
 function renderPage(page){
+  clearBulkSelect();
   const el=document.getElementById('page-content');
   const actions=document.getElementById('topbar-actions');
   actions.innerHTML='';
