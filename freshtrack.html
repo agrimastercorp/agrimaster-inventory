@@ -984,13 +984,22 @@ function confirmSpoilage(){
 
 function confirmPayment(customerId){
   _lockModalSaveBtn();
+  const resolvedId=customerId||document.getElementById('pay-customer')?.value||'';
   const amount=document.getElementById('pay-amount')?.value||'0';
   const date=document.getElementById('pay-date')?.value||'—';
   const bank=document.getElementById('pay-bank')?.value||'—';
   const check=document.getElementById('pay-check')?.value||'';
-  const c=DB.customers?.find(x=>x.id===customerId);
-  _pendingSaveFn=()=>savePayment(customerId);
+  const c=DB.customers?.find(x=>x.id===resolvedId);
+  _pendingSaveFn=()=>savePayment(resolvedId);
   showSaveConfirm('Payment Collection',[ ['Customer',c?.name||'—'],['Amount','₱ '+parseFloat(amount).toLocaleString('en-PH',{minimumFractionDigits:2})],['Date',date],['Bank / Mode',bank],check?['Check #',check]:null ].filter(Boolean));
+}
+
+function payUpdateBalance(sel){
+  const c=DB.customers.find(x=>x.id===sel.value);
+  const info=document.getElementById('pay-balance-info');
+  const val=document.getElementById('pay-balance-val');
+  if(c&&info&&val){info.style.display='';val.textContent=fmt(c.balance||0);}
+  else if(info){info.style.display='none';}
 }
 
 function confirmExpense(){
@@ -3189,6 +3198,7 @@ function exportClientTransactions(){
 //  CREDIT TRACKER
 // ─────────────────────────────────────────────
 function renderUtang(el,actions){
+  actions.innerHTML=`<button class="btn btn-primary" onclick="openPaymentForm('')">💳 Record Payment</button>`;
   const debtors=DB.customers.filter(c=>(+c.balance||0)>0);
   const totalCredit=debtors.reduce((s,c)=>s+(+c.balance||0),0);
   el.innerHTML=`
@@ -3199,7 +3209,7 @@ function renderUtang(el,actions){
     <div class="card-header"><span class="card-title">Credit Tracker</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Customer</th><th>Phone</th><th>Balance</th><th>Recent Transactions</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Customer</th><th>Phone</th><th>Balance</th><th>Recent Transactions</th></tr></thead>
         <tbody>${DB.customers.map(c=>{
           const recentSales=DB.stockOut.filter(s=>s.customerId===c.id&&s.paymentType==='credit').slice(-3);
           const recentPay=DB.payments.filter(p=>p.customerId===c.id).slice(-3);
@@ -3207,11 +3217,9 @@ function renderUtang(el,actions){
             <td class="fw-bold">${c.name}</td>
             <td>${c.phone||'—'}</td>
             <td class="${(+c.balance||0)>0?'utang-amount':'utang-paid'} fw-bold">${fmt(c.balance||0)}</td>
-
             <td style="font-size:11px;color:var(--text3)">${recentSales.map(s=>`-${fmt(s.totalRevenue)} on ${fmtDate(s.date)}`).concat(recentPay.map(p=>`+${fmt(p.amount)} on ${fmtDate(p.date)}`)).join('<br>')||'—'}</td>
-            <td><button class="btn btn-primary btn-sm" onclick="openPaymentForm('${c.id}')">Record Payment</button></td>
           </tr>`;
-        }).join('')||'<tr><td colspan="5"><div class="empty-state"><div class="icon">💳</div><h3>No customer accounts</h3><p>Add customers first</p></div></td></tr>'}
+        }).join('')||'<tr><td colspan="4"><div class="empty-state"><div class="icon">💳</div><h3>No customer accounts</h3><p>Add customers first</p></div></td></tr>'}
         </tbody>
       </table>
     </div>
@@ -3275,12 +3283,20 @@ function renderUtang(el,actions){
 }
 
 function openPaymentForm(customerId){
-  const c=DB.customers.find(x=>x.id===customerId);
-  if(!c)return;
+  const c=customerId?DB.customers.find(x=>x.id===customerId):null;
+  const custOpts='<option value="">-- Select Customer --</option>'+DB.customers.map(cu=>`<option value="${cu.id}"${cu.id===customerId?' selected':''}>${cu.name} (Balance: ${fmt(cu.balance||0)})</option>`).join('');
   openModal(`<div class="modal" style="max-width:560px">
-    <div class="modal-header"><span class="modal-title">Record Payment — ${c.name}</span><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-header"><span class="modal-title">Record Payment</span><button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <div class="alert alert-info mb-3">Current credit balance: <strong>${fmt(c.balance||0)}</strong></div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Customer *</label>
+        <select id="pay-customer" onchange="payUpdateBalance(this)">
+          ${custOpts}
+        </select>
+      </div>
+      <div id="pay-balance-info" style="margin-bottom:12px;${c?'':'display:none'}">
+        <div class="alert alert-info">Current credit balance: <strong id="pay-balance-val">${fmt(c?.balance||0)}</strong></div>
+      </div>
       <div class="form-grid form-grid-2">
 
         <div class="form-group">
@@ -3391,10 +3407,13 @@ function payAddInvoiceRow(){
 }
 
 async function savePayment(customerId){
+  const resolvedId=customerId||document.getElementById('pay-customer')?.value||'';
+  if(!resolvedId){showToast('Please select a customer','error');return;}
   const amount=+document.getElementById('pay-amount').value;
   if(!amount||amount<=0){showToast('Enter valid amount','error');return;}
-  const c=DB.customers.find(x=>x.id===customerId);
+  const c=DB.customers.find(x=>x.id===resolvedId);
   if(!c)return;
+  customerId=resolvedId;
   const action=document.getElementById('pay-action').value;
   const invoiceNumbers=[...document.querySelectorAll('.pay-inv-input')]
     .map(i=>i.value.trim()).filter(Boolean);
