@@ -2881,11 +2881,12 @@ function renderSuppliers(el,actions){
     <div class="card-header"><span class="card-title">Supplier Directory</span><span class="tag">${DB.suppliers.length} suppliers</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Name</th><th>Phone</th><th>Location</th><th>Bank</th><th>Account No.</th><th>Notes</th><th>Actions</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Name</th><th>Contact Name</th><th>Phone</th><th>Location</th><th>Bank</th><th>Account No.</th><th>Notes</th><th>Actions</th></tr></thead>
         <tbody>${DB.suppliers.map(s=>`
           <tr>
             <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="Suppliers" data-key="suppliers" onchange="updateBulkBar()"></td>
             <td class="fw-bold">${s.name}</td>
+            <td>${s.contactName||'—'}</td>
             <td>${s.phone||'—'}</td>
             <td>${s.location||'—'}</td>
             <td>${s.bank||'—'}</td>
@@ -2908,6 +2909,7 @@ function openSupplierForm(data={}){
     <div class="modal-body">
       <div class="form-grid form-grid-2">
         <div class="form-group"><label>Supplier Name *</label><input id="sup-name" value="${data.name||''}"></div>
+        <div class="form-group"><label>Contact Name</label><input id="sup-contact-name" value="${data.contactName||''}" placeholder="e.g. Juan Dela Cruz"></div>
         <div class="form-group"><label>Phone</label><input id="sup-phone" value="${data.phone||''}"></div>
         <div class="form-group"><label>Location</label><input id="sup-loc" value="${data.location||''}"></div>
         <div class="form-group"><label>Notes</label><input id="sup-notes" value="${data.notes||''}"></div>
@@ -2925,7 +2927,7 @@ function openSupplierForm(data={}){
 async function saveSupplier(editId){
   const name=document.getElementById('sup-name').value.trim();
   if(!name){showToast('Supplier name required','error');return;}
-  const entry={id:editId||genId(),name,phone:document.getElementById('sup-phone').value.trim(),location:document.getElementById('sup-loc').value.trim(),notes:document.getElementById('sup-notes').value.trim(),bank:document.getElementById('sup-bank').value.trim(),accountNumber:document.getElementById('sup-acct').value.trim()};
+  const entry={id:editId||genId(),name,contactName:document.getElementById('sup-contact-name').value.trim(),phone:document.getElementById('sup-phone').value.trim(),location:document.getElementById('sup-loc').value.trim(),notes:document.getElementById('sup-notes').value.trim(),bank:document.getElementById('sup-bank').value.trim(),accountNumber:document.getElementById('sup-acct').value.trim()};
   if(editId){const i=DB.suppliers.findIndex(s=>s.id===editId);if(i>=0)DB.suppliers[i]=entry;}
   else DB.suppliers.push(entry);
   saveDB();
