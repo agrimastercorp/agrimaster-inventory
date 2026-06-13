@@ -1032,10 +1032,11 @@ function confirmBeginInventory(){
 function confirmSupplier(id){
   _lockModalSaveBtn();
   const name=document.getElementById('sup-name')?.value?.trim()||'—';
+  const contactName=document.getElementById('sup-contact-name')?.value?.trim()||'—';
   const phone=document.getElementById('sup-phone')?.value?.trim()||'—';
   const loc=document.getElementById('sup-loc')?.value?.trim()||'—';
   _pendingSaveFn=()=>saveSupplier(id);
-  showSaveConfirm(id?'Edit Supplier':'Add Supplier',[ ['Name',name],['Phone',phone],['Location',loc] ]);
+  showSaveConfirm(id?'Edit Supplier':'Add Supplier',[ ['Name',name],['Contact Name',contactName],['Phone',phone],['Location',loc] ]);
 }
 
 function confirmCustomer(id){
