@@ -315,6 +315,16 @@ tr:last-child td{border-bottom:none}
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
     <!-- MAIN -->
     <div class="main-content">
+      <!-- OFFLINE BANNER -->
+      <div id="offline-banner" style="display:none;background:#dc2626;color:#fff;text-align:center;
+           padding:8px 16px;font-size:13px;font-weight:600;letter-spacing:.2px;z-index:999;
+           position:relative;align-items:center;justify-content:center;gap:8px">
+        📡 No Internet Connection — Entries cannot be saved until you are back online.
+      </div>
+      <div id="reconnect-banner" style="display:none;background:#16a34a;color:#fff;text-align:center;
+           padding:6px 16px;font-size:13px;font-weight:600;z-index:999">
+        ✅ Back online — syncing data…
+      </div>
       <div class="topbar">
         <button class="hamburger" id="hamburger-btn" onclick="toggleSidebar()">
           <span></span><span></span><span></span>
@@ -596,6 +606,10 @@ async function gasGet(){
 }
 
 async function gasPost(payload){
+  if(!navigator.onLine){
+    showToast('⚠ No internet connection. Entry was NOT saved. Please reconnect and try again.','error');
+    return false;
+  }
   const url=DB.settings.gasUrl||BAKED_GAS_URL;
   if(!url)return false;
   const key=DB.settings.apiKey||BAKED_API_KEY||'';
@@ -6090,9 +6104,41 @@ function doPost(e) {
 // ═══════════════════════════════════════════════════════════════
 //  APP INIT
 // ═══════════════════════════════════════════════════════════════
+function updateConnectivityUI(){
+  const offline=document.getElementById('offline-banner');
+  const reconnect=document.getElementById('reconnect-banner');
+  if(!offline||!reconnect)return;
+  if(navigator.onLine){
+    offline.style.display='none';
+  } else {
+    offline.style.display='flex';
+    reconnect.style.display='none';
+  }
+}
+
+window.addEventListener('offline',()=>{
+  updateConnectivityUI();
+});
+
+window.addEventListener('online',()=>{
+  const reconnect=document.getElementById('reconnect-banner');
+  const offline=document.getElementById('offline-banner');
+  if(offline)offline.style.display='none';
+  if(reconnect){reconnect.style.display='block';}
+  // Auto-sync immediately on reconnect
+  syncFromGAS().then(ok=>{
+    if(reconnect){
+      setTimeout(()=>{reconnect.style.display='none';},3000);
+    }
+    if(ok){buildSidebar();renderPage(currentPage);}
+  }).catch(()=>{if(reconnect)reconnect.style.display='none';});
+});
+
 async function initApp(){
   loadDB();
   buildSidebar();
+  // Set initial connectivity state
+  updateConnectivityUI();
   // Determine start page — staff with dashboard access land on dashboard
   let startPage='stockin';
   if(SESSION.role==='owner') startPage='dashboard';
@@ -6113,6 +6159,11 @@ async function initApp(){
       renderPage(currentPage);
     }
   }).catch(()=>{});
+
+  // Periodic background sync every 60 seconds while online
+  setInterval(()=>{
+    if(navigator.onLine) syncFromGAS().then(ok=>{if(ok){buildSidebar();renderPage(currentPage);}}).catch(()=>{});
+  }, 60000);
 }
 
 // Check for existing session
