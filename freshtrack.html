@@ -4870,7 +4870,7 @@ function renderAssets(el,actions){
     const years=+a.usefulLife||1;
     const annualDep=(cost-salvage)/years;
     const start=new Date(a.depreciationStartDate||a.purchaseDate||a.date||today);
-    const yearsElapsed=(today-start)/(1000*60*60*24*365.25);
+    const yearsElapsed=Math.max(0,(today-start)/(1000*60*60*24*365.25));
     const accumulatedDep=Math.min(cost-salvage, annualDep*yearsElapsed);
     const bookValue=Math.max(salvage, cost-accumulatedDep);
     return{annualDep,accumulatedDep,bookValue};
@@ -5526,7 +5526,7 @@ function buildIncomeStatement(){
             if(!asset.usefulLife||!asset.cost)return a+(+asset.cost||0);
             const salvage=+asset.salvageValue||0; const cost=+asset.cost||0; const yrs=+asset.usefulLife||1;
             const annDep=(cost-salvage)/yrs;
-            const elapsed=(new Date()-new Date(asset.purchaseDate||new Date()))/(1000*60*60*24*365.25);
+            const elapsed=Math.max(0,(new Date()-new Date(asset.depreciationStartDate||asset.purchaseDate||new Date()))/(1000*60*60*24*365.25));
             return a+Math.max(salvage,cost-Math.min(cost-salvage,annDep*elapsed));
           },0);
           return inv+ar+ppe;
@@ -5649,8 +5649,8 @@ function renderBalanceSheet(el){
     const cost=+a.cost||0;
     const years=+a.usefulLife||1;
     const annualDep=(cost-salvage)/years;
-    const start=new Date(a.purchaseDate||today);
-    const yearsElapsed=(today-start)/(1000*60*60*24*365.25);
+    const start=new Date(a.depreciationStartDate||a.purchaseDate||today);
+    const yearsElapsed=Math.max(0,(today-start)/(1000*60*60*24*365.25));
     const accDep=Math.min(cost-salvage,annualDep*yearsElapsed);
     return Math.max(salvage,cost-accDep);
   }
