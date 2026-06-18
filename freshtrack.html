@@ -4336,11 +4336,12 @@ function renderPnLContent(el){
     const annualDep=(cost-salvage)/yrs;
     const monthlyDep=annualDep/12;
     const purchaseDate=new Date(asset.purchaseDate);
-    const endOfLife=new Date(purchaseDate);
+    const depStartDate=new Date(asset.depreciationStartDate||asset.purchaseDate);
+    const endOfLife=new Date(depStartDate);
     endOfLife.setFullYear(endOfLife.getFullYear()+yrs);
     Object.keys(monthly).forEach(ym=>{
       const ymDate=new Date(ym+'-15');
-      if(ymDate<purchaseDate||ymDate>endOfLife)return;
+      if(ymDate<purchaseDate||ymDate<depStartDate||ymDate>endOfLife)return;
       monthly[ym].depreciation=(monthly[ym].depreciation||0)+monthlyDep;
     });
   });
@@ -4868,7 +4869,7 @@ function renderAssets(el,actions){
     const cost=+a.cost||0;
     const years=+a.usefulLife||1;
     const annualDep=(cost-salvage)/years;
-    const start=new Date(a.purchaseDate||a.date||today);
+    const start=new Date(a.depreciationStartDate||a.purchaseDate||a.date||today);
     const yearsElapsed=(today-start)/(1000*60*60*24*365.25);
     const accumulatedDep=Math.min(cost-salvage, annualDep*yearsElapsed);
     const bookValue=Math.max(salvage, cost-accumulatedDep);
@@ -4963,6 +4964,11 @@ function openAssetModal(id){
           <input type="date" id="ast-date" value="${a?.purchaseDate||new Date().toISOString().split('T')[0]}">
         </div>
         <div class="form-group">
+          <label>Depreciation Start Date</label>
+          <input type="date" id="ast-dep-start" value="${a?.depreciationStartDate||a?.purchaseDate||new Date().toISOString().split('T')[0]}">
+          <small style="color:var(--text-muted);font-size:11px">Defaults to purchase date if not set</small>
+        </div>
+        <div class="form-group">
           <label>Cost (₱) *</label>
           <input type="number" id="ast-cost" min="0" step="any" value="${a?.cost||''}" placeholder="0.00" oninput="calcAssetDepPreview()">
         </div>
@@ -5031,15 +5037,16 @@ async function saveAsset(id){
   const salvageValue=parseFloat(document.getElementById('ast-salvage').value)||0;
   const usefulLife=parseInt(document.getElementById('ast-life').value)||5;
   const notes=document.getElementById('ast-notes').value.trim();
+  const depreciationStartDate=document.getElementById('ast-dep-start').value||purchaseDate;
   if(!name||!cost){showToast('Asset name and cost are required','error');return;}
   if(salvageValue>=cost){showToast('Salvage value must be less than cost','error');return;}
   if(!DB.assets)DB.assets=[];
   let assetData;
   if(id){
     const a=DB.assets.find(x=>x.id===id);
-    if(a){Object.assign(a,{name,category,purchaseDate,cost,salvageValue,usefulLife,notes}); assetData=a;}
+    if(a){Object.assign(a,{name,category,purchaseDate,depreciationStartDate,cost,salvageValue,usefulLife,notes}); assetData=a;}
   } else {
-    assetData={id:genId(),name,category,purchaseDate,cost,salvageValue,usefulLife,notes};
+    assetData={id:genId(),name,category,purchaseDate,depreciationStartDate,cost,salvageValue,usefulLife,notes};
     DB.assets.push(assetData);
   }
   saveDB();
@@ -5371,12 +5378,14 @@ function buildIncomeStatement(){
     const annualDep=(cost-salvage)/yrs;
     // Check if asset is still depreciating during this period
     const purchaseDate=new Date(asset.purchaseDate||today);
-    const endOfLife=new Date(purchaseDate);
+    const depStartDate=new Date(asset.depreciationStartDate||asset.purchaseDate||today);
+    const endOfLife=new Date(depStartDate);
     endOfLife.setFullYear(endOfLife.getFullYear()+yrs);
     const periodEndDate=new Date(periodEnd);
     if(purchaseDate>periodEndDate)return; // not yet purchased
-    // Pro-rate if asset was purchased mid-year or fully depreciated mid-period
-    const depStart=new Date(Math.max(purchaseDate,new Date(periodStart)));
+    if(depStartDate>periodEndDate)return; // depreciation hasn't started yet
+    // Pro-rate if depreciation started mid-period or fully depreciated mid-period
+    const depStart=new Date(Math.max(depStartDate,new Date(periodStart)));
     const depEnd=new Date(Math.min(endOfLife,new Date(periodEnd)));
     if(depEnd<=depStart)return; // fully depreciated before period
     const daysInPeriod=(depEnd-depStart)/(1000*60*60*24);
