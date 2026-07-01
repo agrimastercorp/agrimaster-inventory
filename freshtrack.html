@@ -1034,9 +1034,10 @@ function confirmLoan(id){
 }
 
 function confirmBeginInventory(){
-  _lockModalSaveBtn();
-  const rows=document.querySelectorAll('.begin-row');
-  const count=[...rows].filter(r=>r.querySelector('.begin-product')?.value).length;
+  const tbody=document.getElementById('begin-tbody');
+  const rows=tbody?[...tbody.querySelectorAll('tr')]:[];
+  const count=rows.filter(r=>r.querySelector('.bi-product')?.value.trim()).length;
+  if(!count){showToast('Please fill in at least one product row','error');return;}
   _pendingSaveFn=()=>saveBeginInventory();
   showSaveConfirm('Beginning Inventory',[ ['Rows to Post',`${count} item(s)`],['Note','Opening stock will be added to inventory'] ]);
 }
