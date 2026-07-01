@@ -6522,7 +6522,15 @@ async function initApp(){
 
   // Periodic background sync every 60 seconds while online
   setInterval(()=>{
-    if(navigator.onLine) syncFromGAS().then(ok=>{if(ok){buildSidebar();renderPage(currentPage);}}).catch(()=>{});
+    if(navigator.onLine) syncFromGAS().then(ok=>{
+      if(ok){
+        buildSidebar();
+        // Don't re-render if user is actively filling in a form with unsaved rows
+        const hasUnsavedRows=document.querySelector('#begin-tbody tr .bi-product')?.value?.trim()||
+          document.querySelector('#modal-container .modal');
+        if(!hasUnsavedRows) renderPage(currentPage);
+      }
+    }).catch(()=>{});
   }, 60000);
 }
 
