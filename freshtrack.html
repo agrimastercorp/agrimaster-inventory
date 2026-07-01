@@ -408,6 +408,7 @@ function canSeeCosts(){
   if(!SESSION)return false;
   if(SESSION.role==='owner')return true;
   const u=getUsers().find(x=>x.username===SESSION.username);
+  if(u?.role==='owner')return true; // fallback if SESSION.role is stale
   return u?.canViewCosts===true;
 }
 
