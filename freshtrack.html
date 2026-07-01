@@ -5817,16 +5817,20 @@ function renderBeginInventory(el, actions){
 function addBeginRow(){
   const tbody=document.getElementById('begin-tbody');
   if(!tbody)return;
-  const productOpts=(DB.products||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   const today=new Date().toISOString().split('T')[0];
-  const rowId='br_'+genId();
   const tr=document.createElement('tr');
-  tr.id=rowId;
   tr.innerHTML=`
     <td><input type="date" class="bi-date" value="${today}" style="width:130px"></td>
-    <td><select class="bi-product" style="min-width:150px"><option value="">-- Select --</option>${productOpts}</select></td>
+    <td><input type="text" class="bi-product" placeholder="e.g. Tomato, Rice, Onion" style="min-width:160px"></td>
     <td><input type="number" class="bi-qty" min="0" step="any" placeholder="0" style="width:90px" oninput="calcBeginTotal(this)"></td>
-    <td><select class="bi-unit" style="width:80px"><option value="kg">kg</option><option value="pcs">pcs</option><option value="box">box</option><option value="bag">bag</option><option value="pack">pack</option><option value="bundle">bundle</option></select></td>
+    <td>
+      <input type="text" class="bi-unit" list="bi-unit-list" placeholder="e.g. kg" style="width:80px">
+      <datalist id="bi-unit-list">
+        <option value="kg"><option value="pcs"><option value="box"><option value="bag">
+        <option value="pack"><option value="bundle"><option value="sack"><option value="liter">
+        <option value="tray"><option value="crate"><option value="dozen">
+      </datalist>
+    </td>
     <td><input type="number" class="bi-cost" min="0" step="any" placeholder="0.00" style="width:100px" oninput="calcBeginTotal(this)"></td>
     <td><span class="bi-total fw-bold text-green">₱0.00</span></td>
     <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>`;
@@ -5849,20 +5853,30 @@ async function saveBeginInventory(){
   let saved=0, errors=0;
   for(const tr of rows){
     const date=tr.querySelector('.bi-date').value;
-    const productId=tr.querySelector('.bi-product').value;
+    const rawName=tr.querySelector('.bi-product').value.trim();
     const qty=parseFloat(tr.querySelector('.bi-qty').value)||0;
-    const unit=tr.querySelector('.bi-unit').value;
+    const unit=(tr.querySelector('.bi-unit').value||'').trim();
     const costPerUnit=parseFloat(tr.querySelector('.bi-cost').value)||0;
 
-    if(!productId){errors++;showToast('Select a product for each row','error');continue;}
+    if(!rawName){errors++;showToast('Product name is required for each row','error');continue;}
     if(!qty||!costPerUnit){errors++;showToast('Qty and Unit Cost are required','error');continue;}
+    if(!unit){errors++;showToast('Unit of measurement is required','error');continue;}
+
+    // Auto-create product if it doesn't exist yet
+    if(!DB.products)DB.products=[];
+    let prod=DB.products.find(p=>p.name.toLowerCase()===rawName.toLowerCase());
+    if(!prod){
+      prod={id:genId(),name:rawName,type:'other',unit:unit};
+      DB.products.push(prod);
+      await gasPost({action:'add',sheet:'Products',data:prod});
+    }
 
     const entry={
       id:genId(),
       date,
-      productId,
+      productId:prod.id,
       supplierId:'',
-      type: DB.products.find(p=>p.id===productId)?.type||'vegetable',
+      type:prod.type||'other',
       bulkUnit:unit, bulkQty:qty, kgPerBulk:1, costPerBulk:costPerUnit,
       sellUnit:unit,
       qty, costPerUnit, totalCost:qty*costPerUnit,
@@ -5875,7 +5889,7 @@ async function saveBeginInventory(){
     DB.stockIn.push(entry);
     saveDB();
     await gasPost({action:'add',sheet:'StockIn',data:entry});
-    logActivity('Beginning Inventory',`${productName(productId)}: ${fmtN(qty)} ${unit} @ ${fmt(costPerUnit)}`);
+    logActivity('Beginning Inventory',`${rawName}: ${fmtN(qty)} ${unit} @ ${fmt(costPerUnit)}`);
     saved++;
   }
 
