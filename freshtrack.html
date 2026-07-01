@@ -1563,14 +1563,13 @@ function siFruitRecalc(){
     const costKg=kgPkg>0?costPkg/kgPkg:0;
     const totalCost=numPkg*costPkg;
     if(document.getElementById('si-total-kg')) document.getElementById('si-total-kg').value=totalKg?fmtN(totalKg):'';
-    if(document.getElementById('si-cost-kg')) document.getElementById('si-cost-kg').value=costKg?'₱'+fmtN(costKg):'';
+    if(document.getElementById('si-cost-kg')) document.getElementById('si-cost-kg').value=canSeeCosts()&&costKg?'₱'+fmtN(costKg):'';
     if(s&&numPkg&&costPkg&&kgPkg){
       s.style.display='block';
       document.getElementById('si-summary-text').innerHTML=
         `<strong>${fmtN(numPkg)} ${packaging}</strong> × <strong>${fmtN(kgPkg)} kg</strong>
-         = <strong>${fmtN(totalKg)} kg</strong> total &nbsp;|&nbsp;
-         Cost/kg: <strong class="text-green">₱${fmtN(costKg)}</strong> &nbsp;|&nbsp;
-         Total Cost: <strong>${fmt(totalCost)}</strong>`;
+         = <strong>${fmtN(totalKg)} kg</strong> total`+
+        (canSeeCosts()?` &nbsp;|&nbsp; Cost/kg: <strong class="text-green">₱${fmtN(costKg)}</strong> &nbsp;|&nbsp; Total Cost: <strong>${fmt(totalCost)}</strong>`:'');
     } else if(s) s.style.display='none';
 
   } else {
@@ -1581,15 +1580,14 @@ function siFruitRecalc(){
     const costPerPack=packsPerPkg>0?costPkg/packsPerPkg:0;
     const totalCost=numPkg*costPkg;
     if(document.getElementById('si-cost-per-pack'))
-      document.getElementById('si-cost-per-pack').value=costPerPack?'₱'+fmtN(costPerPack):'';
+      document.getElementById('si-cost-per-pack').value=canSeeCosts()&&costPerPack?'₱'+fmtN(costPerPack):'';
     if(s&&numPkg&&costPkg&&packsPerPkg){
       s.style.display='block';
       const packDesc=packSizeG?` (${packSizeG}g each)`:'';
       document.getElementById('si-summary-text').innerHTML=
         `<strong>${fmtN(numPkg)} ${packaging}</strong> × <strong>${packsPerPkg} packs${packDesc}</strong>
-         = <strong>${fmtN(totalPacks)} packs</strong> total &nbsp;|&nbsp;
-         Cost/pack: <strong class="text-green">₱${fmtN(costPerPack)}</strong> &nbsp;|&nbsp;
-         Total Cost: <strong>${fmt(totalCost)}</strong>`;
+         = <strong>${fmtN(totalPacks)} packs</strong> total`+
+        (canSeeCosts()?` &nbsp;|&nbsp; Cost/pack: <strong class="text-green">₱${fmtN(costPerPack)}</strong> &nbsp;|&nbsp; Total Cost: <strong>${fmt(totalCost)}</strong>`:'');
     } else if(s) s.style.display='none';
   }
 }
@@ -1603,7 +1601,8 @@ function siVegRecalc(){
   if(s&&qty&&costKg){
     s.style.display='block';
     document.getElementById('si-summary-text').innerHTML=
-      `<strong>${fmtN(qty)} ${uom}</strong> @ <strong>₱${fmtN(costKg)}/kg</strong> — Total Cost: <strong>${fmt(totalCost)}</strong>`;
+      `<strong>${fmtN(qty)} ${uom}</strong>`+
+      (canSeeCosts()?` @ <strong>₱${fmtN(costKg)}/kg</strong> — Total Cost: <strong>${fmt(totalCost)}</strong>`:'');
   } else if(s) s.style.display='none';
 }
 
@@ -1750,7 +1749,7 @@ function openStockInEdit(id){
       <!-- Summary banner -->
       <div style="background:var(--bg-secondary);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px">
         <div style="font-weight:700;font-size:14px">${p?.name||'Unknown'} <span class="badge ${isFruit?'badge-orange':'badge-green'}">${isFruit?'🍋 Fruit':'🥦 Veg'}</span></div>
-        <div style="color:var(--text-muted);margin-top:2px">${purchaseSummary} &nbsp;|&nbsp; Total Cost: <strong>${fmt(s.totalCost)}</strong></div>
+        <div style="color:var(--text-muted);margin-top:2px">${purchaseSummary}${canSeeCosts()?` &nbsp;|&nbsp; Total Cost: <strong>${fmt(s.totalCost)}</strong>`:''}</div>
       </div>
 
       <div class="form-grid form-grid-2">
@@ -1764,20 +1763,20 @@ function openStockInEdit(id){
           <select id="sie-supplier"><option value="">-- Select --</option>${supplierOpts}</select>
         </div>
 
-        <div class="form-group">
+        ${canSeeCosts()?`<div class="form-group">
           <label>Total Cost (₱) *</label>
           <input type="number" id="sie-totalcost" value="${s.totalCost||0}" min="0" step="0.01" oninput="sieRecalc()">
-        </div>
+        </div>`:`<input type="hidden" id="sie-totalcost" value="${s.totalCost||0}">`}
         <div class="form-group">
           <label>${isFruit&&!isPackMode?'Total kg':isPackMode?'Total Packs':'Qty'} *</label>
           <input type="number" id="sie-qty" value="${s.qty||0}" min="0.01" step="0.01" oninput="sieRecalc()">
         </div>
 
-        <div class="form-group" style="grid-column:span 2">
+        ${canSeeCosts()?`<div class="form-group" style="grid-column:span 2">
           <label>Cost per ${isPackMode?'Pack':s.sellUnit||'kg'} (auto-computed)</label>
           <input id="sie-costperunit" readonly style="background:var(--bg-secondary);font-weight:700"
             value="${s.costPerUnit?'₱'+fmtN(s.costPerUnit):''}">
-        </div>
+        </div>`:`<input type="hidden" id="sie-costperunit" value="${s.costPerUnit||0}">`}
 
         <div class="form-group" style="grid-column:span 2">
           <label>Payment Method</label>
@@ -2623,7 +2622,7 @@ function renderSpoilage(el,actions){
     <div class="card-header"><span class="card-title">Spoilage / Rejects</span><span class="tag">${DB.spoilage.length} entries</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Date</th><th>Product</th><th>Qty</th><th>Unit</th><th>Reason</th><th>Loss (COGS)</th><th>Staff</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th><th>Date</th><th>Product</th><th>Qty</th><th>Unit</th><th>Reason</th>${canSeeCosts()?'<th>Loss (COGS)</th>':''}<th>Staff</th></tr></thead>
         <tbody>${rows.map(s=>`
           <tr>
             <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="Spoilage" data-key="spoilage" onchange="updateBulkBar()"></td>
@@ -2632,7 +2631,7 @@ function renderSpoilage(el,actions){
             <td>${s.qty}</td>
             <td>${s.unit||DB.products.find(p=>p.id===s.productId)?.unit||'—'}</td>
             <td>${s.reason||'—'}</td>
-            <td class="fw-bold text-red">${fmt(s.loss)}</td>
+            ${canSeeCosts()?`<td class="fw-bold text-red">${fmt(s.loss)}</td>`:''}
             <td><span class="tag">${s.staffUser||'—'}</span></td>
           </tr>`).join('')||'<tr><td colspan="8"><div class="empty-state"><div class="icon">🗑️</div><h3>No spoilage records</h3></div></td></tr>'}
         </tbody>
