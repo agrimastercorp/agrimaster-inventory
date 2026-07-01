@@ -6120,13 +6120,37 @@ function exportData(){
   a.click();
 }
 
-function clearAllData(){
-  if(!confirm('⚠ This will DELETE ALL DATA from local storage. Are you sure?'))return;
-  if(!confirm('This CANNOT be undone. Confirm?'))return;
+async function clearAllData(){
+  if(!confirm('⚠ This will DELETE ALL DATA locally and from Google Sheets. Are you sure?'))return;
+  if(!confirm('This CANNOT be undone. Confirm final delete?'))return;
+
+  showToast('Clearing data from Google Sheets…','warning');
+
+  // Collect all records per sheet before wiping local DB
+  const toDelete=[
+    ...( DB.stockIn||[]).map(r=>({sheet:'StockIn',id:r.id})),
+    ...( DB.stockOut||[]).map(r=>({sheet:'StockOut',id:r.id})),
+    ...( DB.products||[]).map(r=>({sheet:'Products',id:r.id})),
+    ...( DB.suppliers||[]).map(r=>({sheet:'Suppliers',id:r.id})),
+    ...( DB.customers||[]).map(r=>({sheet:'Customers',id:r.id})),
+    ...( DB.spoilage||[]).map(r=>({sheet:'Spoilage',id:r.id})),
+    ...( DB.expenses||[]).map(r=>({sheet:'Expenses',id:r.id})),
+    ...( DB.payments||[]).map(r=>({sheet:'Payments',id:r.id})),
+    ...( DB.accountsPayable||[]).map(r=>({sheet:'AccountsPayable',id:r.id})),
+    ...( DB.assets||[]).map(r=>({sheet:'Assets',id:r.id})),
+    ...( DB.loans||[]).map(r=>({sheet:'Loans',id:r.id})),
+  ];
+
+  for(const rec of toDelete){
+    await gasPost({action:'delete',sheet:rec.sheet,data:{id:rec.id}});
+  }
+
+  // Wipe local DB (keep settings)
   localStorage.removeItem(DB_KEY);
-  DB={products:[],suppliers:[],customers:[],stockIn:[],stockOut:[],spoilage:[],expenses:[],payments:[],accountsPayable:[],activityLog:[],settings:{gasUrl:DB.settings.gasUrl,shopName:DB.settings.shopName,apiKey:DB.settings.apiKey}};
+  DB={products:[],suppliers:[],customers:[],stockIn:[],stockOut:[],spoilage:[],expenses:[],payments:[],accountsPayable:[],assets:[],loans:[],activityLog:[],settings:{gasUrl:DB.settings.gasUrl,shopName:DB.settings.shopName,apiKey:DB.settings.apiKey,users:DB.settings.users,pendingUsers:DB.settings.pendingUsers}};
   saveDB();
-  showToast('All data cleared','warning');
+  showToast('All data cleared ✓','success');
+  renderPage(currentPage);
 }
 
 /* ========== USER MANAGEMENT ========== */
