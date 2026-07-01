@@ -5770,9 +5770,34 @@ function renderBeginInventory(el, actions){
   const existing=(DB.stockIn||[]).filter(s=>s.isOpeningStock);
 
   el.innerHTML=`
+  ${existing.length?`
   <div class="card" style="margin-bottom:20px">
-    <div style="font-weight:700;font-size:16px;margin-bottom:4px">🗃️ Beginning Inventory</div>
-    <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">Enter your existing stock before you started using the system. Each row will be saved as an opening stock entry and feed into FIFO.</div>
+    <div style="font-weight:700;font-size:15px;margin-bottom:12px">✅ Saved Opening Stock (${existing.length} entries)</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Product</th><th>Purchase Qty</th><th>Sell Unit</th><th>Cost/Unit</th><th>Total Cost</th><th>Remaining (kg)</th><th></th></tr></thead>
+        <tbody>
+          ${existing.slice().reverse().map(s=>{
+            const p=DB.products.find(x=>x.id===s.productId);
+            const bulkInfo=s.kgPerBulk&&s.kgPerBulk>1?` (${fmtN(s.bulkQty||s.qty)} ${s.bulkUnit||s.sellUnit} × ${s.kgPerBulk} kg)`:'';
+            return`<tr>
+              <td>${fmtDate(s.date)}</td>
+              <td class="fw-bold">${p?.name||s.productId}</td>
+              <td>${fmtN(s.bulkQty||s.qty)} ${s.bulkUnit||s.sellUnit}${bulkInfo}</td>
+              <td>${s.sellUnit||'kg'}</td>
+              <td>${fmt(s.costPerUnit)}/kg</td>
+              <td class="fw-bold">${fmt(s.totalCost)}</td>
+              <td>${fmtN(s.remainingQty||0)} ${s.sellUnit||'kg'}</td>
+              <td><button class="btn btn-danger btn-sm" onclick="deleteBeginEntry('${s.id}')">🗑️</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`:''}
+  <div class="card">
+    <div style="font-weight:700;font-size:16px;margin-bottom:4px">➕ Add Opening Stock</div>
+    <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">Enter your existing stock before you started using the system. Each row feeds into FIFO.</div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -5785,33 +5810,9 @@ function renderBeginInventory(el, actions){
       <button class="btn btn-secondary" onclick="addBeginRow()">+ Add Row</button>
       <button class="btn btn-success" onclick="confirmBeginInventory()">💾 Save All</button>
     </div>
-  </div>
-  ${existing.length?`
-  <div class="card">
-    <div style="font-weight:700;font-size:15px;margin-bottom:12px">Saved Opening Stock Entries (${existing.length})</div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>Unit Cost</th><th>Total Cost</th><th>Remaining</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${existing.slice().reverse().map(s=>{
-            const p=DB.products.find(x=>x.id===s.productId);
-            return`<tr>
-              <td>${fmtDate(s.date)}</td>
-              <td class="fw-bold">${p?.name||s.productId}</td>
-              <td>${fmtN(s.qty)} ${s.sellUnit||'kg'}</td>
-              <td>${fmt(s.costPerUnit)}</td>
-              <td class="fw-bold">${fmt(s.totalCost)}</td>
-              <td>${fmtN(s.remainingQty||0)} ${s.sellUnit||'kg'}</td>
-              <td><button class="btn btn-danger btn-sm" onclick="deleteBeginEntry('${s.id}')">🗑️ Del</button></td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  </div>`:''}`;
+  </div>`;
 
-  // Add one empty row by default if no existing entries
-  if(!existing.length) addBeginRow();
+  addBeginRow(); // always start with one empty row ready
 }
 
 function addBeginRow(){
