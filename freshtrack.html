@@ -435,6 +435,13 @@ async function doLogin(){
     document.getElementById('login-error').style.display='block';
     return;
   }
+  // Guarantee role is never missing — GAS sync can strip it
+  if(!user.role){
+    const def=DEFAULT_USERS.find(x=>x.username===u);
+    user.role=def?.role||'staff';
+    DB.settings.users=getUsers(); // persist the fix
+    saveDB();
+  }
   SESSION = user;
   sessionStorage.setItem('ft_session', JSON.stringify(user));
   document.getElementById('login-screen').style.display='none';
@@ -676,8 +683,16 @@ async function syncFromGAS(){
     if(s.users){
       try{
         const parsed=JSON.parse(s.users);
-        // Only overwrite local users if GAS has a non-empty array with real accounts
         if(Array.isArray(parsed)&&parsed.length>0){
+          const existing=DB.settings.users||[];
+          // Preserve role field — GAS may not store it
+          parsed.forEach(u=>{
+            if(!u.role){
+              const local=existing.find(x=>x.username===u.username);
+              const def=DEFAULT_USERS.find(x=>x.username===u.username);
+              u.role=local?.role||def?.role||'staff';
+            }
+          });
           DB.settings.users=parsed;
         }
       }catch(e){}
@@ -2754,7 +2769,7 @@ function renderProducts(el,actions){
         <td class="fw-bold">${p.name}</td>
         <td>${stockDisplay}</td>
         <td>${safetyDisplay}</td>
-        <td class="fw-bold">${fmt(stockValue)}</td>
+        ${canSeeCosts()?`<td class="fw-bold">${fmt(stockValue)}</td>`:''}
         <td><span class="badge ${badgeClass}">${status}</span></td>
         ${isOwner?`<td><button class="btn btn-secondary btn-sm" onclick='openProductForm(${JSON.stringify(p)})'>Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteProduct('${p.id}')">Del</button></td>`:'<td></td>'}
@@ -2771,11 +2786,11 @@ function renderProducts(el,actions){
   const lowCount=DB.products.filter(p=>{const q=getStockLevel(p.id);return q>0&&q<=(+p.reorderLevel||5);}).length;
   const outCount=DB.products.filter(p=>getStockLevel(p.id)<=0).length;
 
-  const thead=`<thead><tr><th>Type</th><th>Product</th><th>In Stock</th><th>Safety Stock</th><th>Stock Value</th><th>Status</th>${isOwner?'<th>Actions</th>':''}</tr></thead>`;
+  const thead=`<thead><tr><th>Type</th><th>Product</th><th>In Stock</th><th>Safety Stock</th>${canSeeCosts()?'<th>Stock Value</th>':''}<th>Status</th>${isOwner?'<th>Actions</th>':''}</tr></thead>`;
 
   el.innerHTML=`
   <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
-    <div class="stat-card stat-blue"><div class="stat-label">Total Inventory Value</div><div class="stat-value">${fmt(totalValue)}</div><div class="stat-sub">at cost (FIFO)</div></div>
+    ${canSeeCosts()?`<div class="stat-card stat-blue"><div class="stat-label">Total Inventory Value</div><div class="stat-value">${fmt(totalValue)}</div><div class="stat-sub">at cost (FIFO)</div></div>`:''}
     <div class="stat-card stat-orange"><div class="stat-label">Low Stock</div><div class="stat-value">${lowCount}</div><div class="stat-sub">products below safety level</div></div>
     <div class="stat-card stat-red"><div class="stat-label">Out of Stock</div><div class="stat-value">${outCount}</div><div class="stat-sub">products at zero</div></div>
   </div>
