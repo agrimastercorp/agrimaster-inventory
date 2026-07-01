@@ -5834,7 +5834,10 @@ function addBeginRow(){
       </datalist>
     </td>
     <td><input type="number" class="bi-kgperunit" min="0" step="any" placeholder="leave blank if kg" style="width:120px" oninput="calcBeginTotal(this)"></td>
-    <td><input type="number" class="bi-cost" min="0" step="any" placeholder="0.00" style="width:100px" oninput="calcBeginTotal(this)"></td>
+    <td>
+      <input type="number" class="bi-cost" min="0" step="any" placeholder="0.00" style="width:100px" oninput="calcBeginTotal(this)">
+      <div class="bi-costperkg" style="font-size:11px;color:var(--primary);margin-top:3px;display:none"></div>
+    </td>
     <td><span class="bi-total fw-bold text-green">₱0.00</span></td>
     <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>`;
   tbody.appendChild(tr);
@@ -5844,7 +5847,17 @@ function calcBeginTotal(inp){
   const tr=inp.closest('tr');
   const qty=parseFloat(tr.querySelector('.bi-qty').value)||0;
   const cost=parseFloat(tr.querySelector('.bi-cost').value)||0;
+  const kgPerUnit=parseFloat(tr.querySelector('.bi-kgperunit').value)||0;
   tr.querySelector('.bi-total').textContent='₱'+fmtN(qty*cost);
+  const lbl=tr.querySelector('.bi-costperkg');
+  if(lbl){
+    if(kgPerUnit>0&&cost>0){
+      lbl.style.display='block';
+      lbl.textContent='= ₱'+fmtN(cost/kgPerUnit)+'/kg';
+    } else {
+      lbl.style.display='none';
+    }
+  }
 }
 
 
