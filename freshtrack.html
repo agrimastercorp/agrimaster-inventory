@@ -5776,7 +5776,7 @@ function renderBeginInventory(el, actions){
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Date</th><th>Product</th><th>Quantity</th><th>Unit</th><th>Unit Cost (₱)</th><th>Total Cost (₱)</th><th></th>
+          <th>Date</th><th>Product</th><th>Quantity</th><th>Unit</th><th>kg per Unit</th><th>Unit Cost (₱/unit)</th><th>Total Cost (₱)</th><th></th>
         </tr></thead>
         <tbody id="begin-tbody"></tbody>
       </table>
@@ -5824,13 +5824,14 @@ function addBeginRow(){
     <td><input type="text" class="bi-product" placeholder="e.g. Tomato, Rice, Onion" style="min-width:160px"></td>
     <td><input type="number" class="bi-qty" min="0" step="any" placeholder="0" style="width:90px" oninput="calcBeginTotal(this)"></td>
     <td>
-      <input type="text" class="bi-unit" list="bi-unit-list" placeholder="e.g. kg" style="width:80px">
+      <input type="text" class="bi-unit" list="bi-unit-list" placeholder="e.g. box" style="width:80px">
       <datalist id="bi-unit-list">
         <option value="kg"><option value="pcs"><option value="box"><option value="bag">
         <option value="pack"><option value="bundle"><option value="sack"><option value="liter">
         <option value="tray"><option value="crate"><option value="dozen">
       </datalist>
     </td>
+    <td><input type="number" class="bi-kgperunit" min="0" step="any" placeholder="leave blank if kg" style="width:120px" oninput="calcBeginTotal(this)"></td>
     <td><input type="number" class="bi-cost" min="0" step="any" placeholder="0.00" style="width:100px" oninput="calcBeginTotal(this)"></td>
     <td><span class="bi-total fw-bold text-green">₱0.00</span></td>
     <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>`;
@@ -5844,6 +5845,7 @@ function calcBeginTotal(inp){
   tr.querySelector('.bi-total').textContent='₱'+fmtN(qty*cost);
 }
 
+
 async function saveBeginInventory(){
   const tbody=document.getElementById('begin-tbody');
   if(!tbody)return;
@@ -5854,19 +5856,26 @@ async function saveBeginInventory(){
   for(const tr of rows){
     const date=tr.querySelector('.bi-date').value;
     const rawName=tr.querySelector('.bi-product').value.trim();
-    const qty=parseFloat(tr.querySelector('.bi-qty').value)||0;
-    const unit=(tr.querySelector('.bi-unit').value||'').trim();
-    const costPerUnit=parseFloat(tr.querySelector('.bi-cost').value)||0;
+    const bulkQty=parseFloat(tr.querySelector('.bi-qty').value)||0;
+    const bulkUnit=(tr.querySelector('.bi-unit').value||'').trim();
+    const kgPerUnit=parseFloat(tr.querySelector('.bi-kgperunit').value)||0;
+    const costPerBulk=parseFloat(tr.querySelector('.bi-cost').value)||0;
 
     if(!rawName){errors++;showToast('Product name is required for each row','error');continue;}
-    if(!qty||!costPerUnit){errors++;showToast('Qty and Unit Cost are required','error');continue;}
-    if(!unit){errors++;showToast('Unit of measurement is required','error');continue;}
+    if(!bulkQty||!costPerBulk){errors++;showToast('Qty and Unit Cost are required','error');continue;}
+    if(!bulkUnit){errors++;showToast('Unit of measurement is required','error');continue;}
+
+    // If kg per unit is provided, convert to kg for FIFO tracking
+    const hasKgConversion=kgPerUnit>0;
+    const totalKg=hasKgConversion?bulkQty*kgPerUnit:bulkQty;
+    const sellUnit=hasKgConversion?'kg':bulkUnit;
+    const costPerKg=hasKgConversion?costPerBulk/kgPerUnit:costPerBulk;
 
     // Auto-create product if it doesn't exist yet
     if(!DB.products)DB.products=[];
     let prod=DB.products.find(p=>p.name.toLowerCase()===rawName.toLowerCase());
     if(!prod){
-      prod={id:genId(),name:rawName,type:'other',unit:unit};
+      prod={id:genId(),name:rawName,type:'other',unit:sellUnit};
       DB.products.push(prod);
       await gasPost({action:'add',sheet:'Products',data:prod});
     }
@@ -5877,10 +5886,10 @@ async function saveBeginInventory(){
       productId:prod.id,
       supplierId:'',
       type:prod.type||'other',
-      bulkUnit:unit, bulkQty:qty, kgPerBulk:1, costPerBulk:costPerUnit,
-      sellUnit:unit,
-      qty, costPerUnit, totalCost:qty*costPerUnit,
-      remainingQty:qty,
+      bulkUnit, bulkQty, kgPerBulk:hasKgConversion?kgPerUnit:1, costPerBulk,
+      sellUnit,
+      qty:totalKg, costPerUnit:costPerKg, totalCost:bulkQty*costPerBulk,
+      remainingQty:totalKg,
       paymentMethod:'cash',
       staffUser:SESSION.username,
       isOpeningStock:true
@@ -5889,7 +5898,8 @@ async function saveBeginInventory(){
     DB.stockIn.push(entry);
     saveDB();
     await gasPost({action:'add',sheet:'StockIn',data:entry});
-    logActivity('Beginning Inventory',`${rawName}: ${fmtN(qty)} ${unit} @ ${fmt(costPerUnit)}`);
+    const convNote=hasKgConversion?` (${fmtN(totalKg)} kg total)`:'';
+    logActivity('Beginning Inventory',`${rawName}: ${fmtN(bulkQty)} ${bulkUnit}${convNote} @ ${fmt(costPerBulk)}`);
     saved++;
   }
 
