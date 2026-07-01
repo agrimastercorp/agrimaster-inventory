@@ -404,6 +404,13 @@ function canAccessPage(pageId){
   return Array.isArray(u.pageAccess)&&u.pageAccess.includes(pageId);
 }
 
+function canSeeCosts(){
+  if(!SESSION)return false;
+  if(SESSION.role==='owner')return true;
+  const u=getUsers().find(x=>x.username===SESSION.username);
+  return u?.canViewCosts===true;
+}
+
 function guardReport(reportId, fn){
   if(canAccessReport(reportId)){fn();}
   else{showToast('You do not have permission to access this report. Contact the owner.','error');}
@@ -1205,7 +1212,7 @@ function renderDashboard(el){
     <div class="stat-card stat-red"><div class="stat-label">Low Stock Items</div><div class="stat-value">${lowStock.length}</div><div class="stat-sub">${outOfStock.length} out of stock</div></div>
     <div class="stat-card"><div class="stat-label">Total Products</div><div class="stat-value">${DB.products.length}</div><div class="stat-sub">${DB.suppliers.length} suppliers</div></div>
     <div class="stat-card"><div class="stat-label">Expiring Soon</div><div class="stat-value">${expiringSoon.length}</div><div class="stat-sub">Within 3 days</div></div>
-    <div class="stat-card stat-blue"><div class="stat-label">Total Inventory Value</div><div class="stat-value">${fmt(totalInventoryValue)}</div><div class="stat-sub">at cost (FIFO)</div></div>
+    ${canSeeCosts()?`<div class="stat-card stat-blue"><div class="stat-label">Total Inventory Value</div><div class="stat-value">${fmt(totalInventoryValue)}</div><div class="stat-sub">at cost (FIFO)</div></div>`:''}
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
     <div class="card">
@@ -1224,7 +1231,7 @@ function renderDashboard(el){
       <div class="card-header"><span class="card-title">Inventory Levels</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Product</th><th>In Stock</th><th>Unit</th><th>Inv. Value</th><th>Status</th></tr></thead>
+          <thead><tr><th>Product</th><th>In Stock</th><th>Unit</th>${canSeeCosts()?'<th>Inv. Value</th>':''}<th>Status</th></tr></thead>
           <tbody>${(()=>{
             // Group products by name (case-insensitive), combine stock levels and value
             const grouped=new Map();
@@ -1242,8 +1249,8 @@ function renderDashboard(el){
             });
             const rows=[...grouped.values()].slice(0,8);
             return rows.map(r=>{const low=r.qty<=r.reorderLevel;return`
-            <tr><td>${r.name}</td><td class="fw-bold">${fmtN(r.qty)}</td><td>${r.unit}</td>
-            <td class="fw-bold">${fmt(r.value)}</td>
+            <tr><td>${r.name}</td><td class="fw-bold">${fmtN(r.qty)}</td><td style="${r.qty<=0?'color:var(--danger)':''}">${r.unit}</td>
+            ${canSeeCosts()?`<td class="fw-bold">${fmt(r.value)}</td>`:''}
             <td><span class="badge ${r.qty<=0?'badge-red':low?'badge-orange':'badge-green'}">${r.qty<=0?'OUT':low?'LOW':'OK'}</span></td></tr>`;}).join('')||'<tr><td colspan="5" class="text-center" style="color:var(--text3)">No products</td></tr>';
           })()}
           </tbody>
@@ -1297,9 +1304,9 @@ function renderStockIn(el,actions){
         <td class="fw-bold">${p?.name||s.productId}</td>
         <td><span class="badge ${isFruit?'badge-orange':'badge-green'}">${purchasedStr}</span></td>
         <td class="fw-bold">${totalLabel}</td>
-        <td class="fw-bold text-green">${costUnitLabel}</td>
+        ${_showCost?`<td class="fw-bold text-green">${costUnitLabel}</td>
         <td>${isFruit?fmt(s.costPerBulk||0)+'/'+(s.bulkUnit||'box'):'—'}</td>
-        <td class="fw-bold">${fmt(s.totalCost)}</td>
+        <td class="fw-bold">${fmt(s.totalCost)}</td>`:''}
         <td>${pmBadge}</td>
         <td>${expiryBadge(s.expiryDate)}</td>
         <td>${remainLabel}</td>
@@ -1312,11 +1319,12 @@ function renderStockIn(el,actions){
     }).join('');
   }
 
+  const _showCost=canSeeCosts();
   const thead=`<thead><tr>
     <th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th>
     <th>Date</th><th>Supplier</th><th>Product</th>
-    <th>Purchased</th><th>Total kg</th><th>Cost/kg</th><th>Cost/Pkg</th>
-    <th>Total Cost</th><th>Payment</th><th>Expiry</th><th>Remaining</th><th>Staff</th><th>Actions</th>
+    <th>Purchased</th><th>Total kg</th>${_showCost?'<th>Cost/kg</th><th>Cost/Pkg</th><th>Total Cost</th>':''}
+    <th>Payment</th><th>Expiry</th><th>Remaining</th><th>Staff</th><th>Actions</th>
   </tr></thead>`;
 
   el.innerHTML=`
@@ -5776,7 +5784,7 @@ function renderBeginInventory(el, actions){
     <div style="font-weight:700;font-size:15px;margin-bottom:12px">✅ Saved Opening Stock (${existing.length} entries)</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Product</th><th>Purchase Qty</th><th>Sell Unit</th><th>Cost/Unit</th><th>Total Cost</th><th>Remaining (kg)</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Product</th><th>Purchase Qty</th><th>Sell Unit</th>${canSeeCosts()?'<th>Cost/Unit</th><th>Total Cost</th>':''}<th>Remaining (kg)</th><th></th></tr></thead>
         <tbody>
           ${existing.slice().reverse().map(s=>{
             const p=DB.products.find(x=>x.id===s.productId);
@@ -5786,8 +5794,7 @@ function renderBeginInventory(el, actions){
               <td class="fw-bold">${p?.name||s.productId}</td>
               <td>${fmtN(s.bulkQty||s.qty)} ${s.bulkUnit||s.sellUnit}${bulkInfo}</td>
               <td>${s.sellUnit||'kg'}</td>
-              <td>${fmt(s.costPerUnit)}/kg</td>
-              <td class="fw-bold">${fmt(s.totalCost)}</td>
+              ${canSeeCosts()?`<td>${fmt(s.costPerUnit)}/kg</td><td class="fw-bold">${fmt(s.totalCost)}</td>`:''}
               <td>${fmtN(s.remainingQty||0)} ${s.sellUnit||'kg'}</td>
               <td><button class="btn btn-danger btn-sm" onclick="deleteBeginEntry('${s.id}')">🗑️</button></td>
             </tr>`;
@@ -5802,7 +5809,7 @@ function renderBeginInventory(el, actions){
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Date</th><th>Product</th><th>Type</th><th>Quantity</th><th>Unit</th><th>kg per Unit</th><th>Unit Cost (₱/unit)</th><th>Total Cost (₱)</th><th></th>
+          <th>Date</th><th>Product</th><th>Type</th><th>Quantity</th><th>Unit</th><th>kg per Unit</th>${canSeeCosts()?'<th>Unit Cost (₱/unit)</th><th>Total Cost (₱)</th>':''}<th></th>
         </tr></thead>
         <tbody id="begin-tbody"></tbody>
       </table>
@@ -5841,11 +5848,11 @@ function addBeginRow(){
       </datalist>
     </td>
     <td><input type="number" class="bi-kgperunit" min="0" step="any" placeholder="leave blank if kg" style="width:120px" oninput="calcBeginTotal(this)"></td>
-    <td>
+    ${canSeeCosts()?`<td>
       <input type="number" class="bi-cost" min="0" step="any" placeholder="0.00" style="width:100px" oninput="calcBeginTotal(this)">
       <div class="bi-costperkg" style="font-size:11px;color:var(--primary);margin-top:3px;display:none"></div>
     </td>
-    <td><span class="bi-total fw-bold text-green">₱0.00</span></td>
+    <td><span class="bi-total fw-bold text-green">₱0.00</span></td>`:'<td><input type="number" class="bi-cost" style="display:none" value="0"></td>'}
     <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>`;
   tbody.appendChild(tr);
 }
@@ -6245,6 +6252,14 @@ function openEditUserModal(uid){
       </div>
     </div>
 
+    <div style="margin:14px 0 8px;font-weight:700;font-size:13px;color:var(--primary)">🔒 Cost & Price Visibility</div>
+    <div style="background:var(--bg2);border-radius:8px;padding:10px;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="um-can-view-costs" ${(!isNew&&u?.canViewCosts)?'checked':''}>
+        <span><strong>Can view cost prices</strong> — allows staff to see unit cost, total cost, and inventory value columns</span>
+      </label>
+    </div>
+
     <div style="margin:14px 0 4px;font-weight:700;font-size:13px;color:var(--primary)">📋 Page Access</div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Which pages/sections this staff can see in their sidebar.</div>
     <div style="background:var(--bg2);border-radius:8px;padding:10px;margin-bottom:14px">
@@ -6289,6 +6304,7 @@ async function saveUserModal(uid){
   const selected=allAccess?'all':[...document.querySelectorAll('#um-report-list input[name="rpt"]:checked')].map(x=>x.value);
   const allPages=document.getElementById('um-all-pages').checked;
   const pageSelected=allPages?'all':[...document.querySelectorAll('#um-page-list input[name="pg"]:checked')].map(x=>x.value);
+  const canViewCosts=document.getElementById('um-can-view-costs')?.checked||false;
 
   if(!username){showToast('Username is required','error');return;}
   if(!display){showToast('Display name is required','error');return;}
@@ -6297,7 +6313,7 @@ async function saveUserModal(uid){
   if(isNew){
     if(!password){showToast('Password is required for new users','error');return;}
     if(users.find(x=>x.username===username)){showToast('Username already exists','error');return;}
-    users.push({id:genId(),username,password,role:'staff',display,reportAccess:selected,pageAccess:pageSelected});
+    users.push({id:genId(),username,password,role:'staff',display,reportAccess:selected,pageAccess:pageSelected,canViewCosts});
     logActivity('add_user',`Added user: ${username}`);
   } else {
     const u=users.find(x=>(x.id||x.username)===uid);
@@ -6306,6 +6322,7 @@ async function saveUserModal(uid){
     if(password) u.password=password;
     u.reportAccess=selected;
     u.pageAccess=pageSelected;
+    u.canViewCosts=canViewCosts;
     logActivity('edit_user',`Edited user: ${username}, pages: ${Array.isArray(pageSelected)?pageSelected.length+' pages':'all'}, reports: ${Array.isArray(selected)?selected.length+' reports':'all'}`);
   }
   DB.settings.users=users;
