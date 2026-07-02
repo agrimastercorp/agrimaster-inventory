@@ -2004,37 +2004,42 @@ async function saveStockInEdit(id){
 
   let newQty, newTotalCost, newCostPerUnit, newBulkQty, newKgPerBulk, newCostPerBulk;
 
+  const canEdit=canSeeCosts();
   if(isFruit2 && sellMode==='kg'){
     newBulkQty=+document.getElementById('sie-bulkqty')?.value||s.bulkQty||0;
     newKgPerBulk=+document.getElementById('sie-kgperbulk')?.value||s.kgPerBulk||0;
     newCostPerBulk=+document.getElementById('sie-costperbulk')?.value||s.costPerBulk||0;
-    if(!newBulkQty||!newKgPerBulk||!newCostPerBulk){showToast('Please fill in packages, kg per package, and cost','error');return;}
+    if(!newBulkQty||!newKgPerBulk){showToast('Please fill in number of packages and kg per package','error');return;}
+    if(canEdit&&!newCostPerBulk){showToast('Please fill in cost per package','error');return;}
     newQty=newBulkQty*newKgPerBulk;
-    newTotalCost=newBulkQty*newCostPerBulk;
-    newCostPerUnit=newCostPerBulk/newKgPerBulk;
+    newTotalCost=newBulkQty*newCostPerBulk||s.totalCost;
+    newCostPerUnit=newKgPerBulk>0?newCostPerBulk/newKgPerBulk:s.costPerUnit;
   } else if(isFruit2 && sellMode==='pack'){
     newBulkQty=+document.getElementById('sie-bulkqty')?.value||s.bulkQty||0;
     const packsPerBulk=+document.getElementById('sie-packsperbulk')?.value||s.packsPerBulk||0;
     newCostPerBulk=+document.getElementById('sie-costperbulk')?.value||s.costPerBulk||0;
     newKgPerBulk=+document.getElementById('sie-kgperbulk')?.value||s.kgPerBulk||0;
-    if(!newBulkQty||!packsPerBulk||!newCostPerBulk){showToast('Please fill in packages, packs per package, and cost','error');return;}
+    if(!newBulkQty||!packsPerBulk){showToast('Please fill in packages and packs per package','error');return;}
+    if(canEdit&&!newCostPerBulk){showToast('Please fill in cost per package','error');return;}
     newQty=newBulkQty*packsPerBulk;
-    newTotalCost=newBulkQty*newCostPerBulk;
-    newCostPerUnit=newCostPerBulk/packsPerBulk;
+    newTotalCost=newBulkQty*newCostPerBulk||s.totalCost;
+    newCostPerUnit=packsPerBulk>0?newCostPerBulk/packsPerBulk:s.costPerUnit;
     s.packsPerBulk=packsPerBulk;
     s.packSizeG=+document.getElementById('sie-packsize')?.value||s.packSizeG||0;
   } else {
     // Vegetable
     newQty=+document.getElementById('sie-qty')?.value||s.qty||0;
     newCostPerBulk=+document.getElementById('sie-costperbulk')?.value||s.costPerUnit||0;
-    if(!newQty||!newCostPerBulk){showToast('Qty and Cost cannot be zero','error');return;}
-    newTotalCost=newQty*newCostPerBulk;
-    newCostPerUnit=newCostPerBulk;
+    if(!newQty){showToast('Quantity cannot be zero','error');return;}
+    if(canEdit&&!newCostPerBulk){showToast('Cost cannot be zero','error');return;}
+    newTotalCost=newQty*(newCostPerBulk||0)||s.totalCost;
+    newCostPerUnit=newCostPerBulk||s.costPerUnit;
     newBulkQty=newQty; newKgPerBulk=s.kgPerBulk||1;
     s.sellUnit=document.getElementById('sie-uom')?.value||s.sellUnit||'kg';
     newCostPerBulk=newCostPerUnit;
   }
 
+  // Always save locally first — GAS errors must never block the UI
   s.date=newDate;
   s.supplierId=newSupplierId;
   s.totalCost=newTotalCost;
@@ -2046,43 +2051,30 @@ async function saveStockInEdit(id){
   if(newKgPerBulk) s.kgPerBulk=newKgPerBulk;
   if(isFruit2) s.bulkUnit=document.getElementById('sie-packaging')?.value||s.bulkUnit;
   s.paymentMethod=newPaymentMethod;
-
-  // If payment method changed to/from credit — update Accounts Payable
-  if(oldPaymentMethod!=='credit' && newPaymentMethod==='credit'){
-    // Newly set to credit — create AP entry if not already there
-    if(!DB.accountsPayable) DB.accountsPayable=[];
-    const alreadyExists=DB.accountsPayable.some(a=>a.sourceStockInId===id);
-    if(!alreadyExists){
-      const p=DB.products.find(x=>x.id===s.productId);
-      const apEntry={
-        id:genId(), date:s.date, supplierId:s.supplierId,
-        item:p?.name||'Unknown', description:p?.name||'Unknown', qty:s.bulkQty||s.qty,
-        costPrice:s.costPerBulk||s.costPerUnit, totalAmount:newTotalCost,
-        status:'unpaid', paidAmount:0, paidDate:null, paymentLogs:[],
-        staffUser:SESSION.username, sourceStockInId:id
-      };
-      DB.accountsPayable.push(apEntry);
-      await gasPost({action:'add',sheet:'AccountsPayable',data:apEntry});
-      showToast('Payment changed to Credit — added to Accounts Payable 🧾','success');
-    }
-  } else if(oldPaymentMethod==='credit' && newPaymentMethod!=='credit'){
-    // Changed away from credit — mark linked AP as note (don't auto-delete, let user manage)
-    showToast('Payment method changed from Credit — please review Accounts Payable manually','warning');
-  } else if(newPaymentMethod==='credit'){
-    // Still credit — update AP total if it exists
-    const ap=DB.accountsPayable?.find(a=>a.sourceStockInId===id&&a.status==='unpaid');
-    if(ap){
-      ap.totalAmount=newTotalCost;ap.date=newDate;ap.supplierId=newSupplierId;
-      await gasPost({action:'update',sheet:'AccountsPayable',data:{id:ap.id,totalAmount:ap.totalAmount,date:ap.date,supplierId:ap.supplierId}});
-    }
-  }
-
   saveDB();
-  logActivity('Edit Stock IN',`${DB.products.find(x=>x.id===s.productId)?.name} — ${fmtN(newQty)} units, Total Cost: ${fmt(newTotalCost)}, Payment: ${newPaymentMethod}`);
-  await gasPost({action:'update',sheet:'StockIn',data:s});
   closeModal();
   showToast('Purchase updated ✓','success');
   renderPage('stockin');
+
+  // Sync to GAS in background — failures won't affect the user
+  try{
+    if(oldPaymentMethod!=='credit' && newPaymentMethod==='credit'){
+      if(!DB.accountsPayable) DB.accountsPayable=[];
+      const alreadyExists=DB.accountsPayable.some(a=>a.sourceStockInId===id);
+      if(!alreadyExists){
+        const pName=DB.products.find(x=>x.id===s.productId)?.name||'Unknown';
+        const apEntry={id:genId(),date:s.date,supplierId:s.supplierId,item:pName,description:pName,qty:s.bulkQty||s.qty,costPrice:s.costPerBulk||s.costPerUnit,totalAmount:newTotalCost,status:'unpaid',paidAmount:0,paidDate:null,paymentLogs:[],staffUser:SESSION.username,sourceStockInId:id};
+        DB.accountsPayable.push(apEntry);
+        saveDB();
+        await gasPost({action:'add',sheet:'AccountsPayable',data:apEntry});
+      }
+    } else if(newPaymentMethod==='credit'){
+      const ap=DB.accountsPayable?.find(a=>a.sourceStockInId===id&&a.status==='unpaid');
+      if(ap){ap.totalAmount=newTotalCost;ap.date=newDate;ap.supplierId=newSupplierId;await gasPost({action:'update',sheet:'AccountsPayable',data:{id:ap.id,totalAmount:ap.totalAmount,date:ap.date,supplierId:ap.supplierId}});}
+    }
+    logActivity('Edit Stock IN',`${DB.products.find(x=>x.id===s.productId)?.name} — ${fmtN(newQty)} units`);
+    await gasPost({action:'update',sheet:'StockIn',data:s});
+  }catch(e){ console.warn('GAS sync failed (data saved locally):', e); }
 }
 
 function exportStockInCSV(){
