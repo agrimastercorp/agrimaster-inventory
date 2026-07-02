@@ -1772,7 +1772,7 @@ function openStockInEdit(id){
     </div>
     <div class="modal-body">
 
-      <input type="hidden" id="sie-sellmode" value="${s.sellMode||'kg'}">
+      <input type="hidden" id="sie-sellmode" value="${isFruit?(s.sellMode||'kg'):'veg'}">
       <input type="hidden" id="sie-productid" value="${s.productId||''}">
 
       <!-- Product name (editable to fix missing/wrong products) -->
@@ -1979,7 +1979,7 @@ async function saveStockInEdit(id){
   let p2=DB.products.find(x=>x.id===s.productId);
   if(typedName){
     const normalizedTyped=typedName.toLowerCase();
-    const isFruitType=sellMode!=='veg'&&(s.type==='fruit'||p2?.type==='fruit'||sellMode==='kg'||sellMode==='pack');
+    const isFruitType=sellMode!=='veg'&&(s.type==='fruit'||p2?.type==='fruit'||sellMode==='pack');
     const matchedProd=DB.products.find(x=>x.name.toLowerCase()===normalizedTyped)
                     ||DB.products.find(x=>x.name.toLowerCase().includes(normalizedTyped));
     if(matchedProd){
