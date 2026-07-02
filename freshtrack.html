@@ -1317,7 +1317,7 @@ function renderStockIn(el,actions){
         <td><input type="checkbox" class="bulk-cb" data-id="${s.id}" data-sheet="StockIn" data-key="stockIn" onchange="updateBulkBar()"></td>
         <td>${fmtDate(s.date)}</td>
         <td>${supplierName(s.supplierId)}</td>
-        <td class="fw-bold">${p?.name||s.productId}</td>
+        <td class="fw-bold">${p?.name||s.productName||s.productId}</td>
         <td><span class="badge ${isFruit?'badge-orange':'badge-green'}">${purchasedStr}</span></td>
         <td class="fw-bold">${totalLabel}</td>
         ${_showCost?`<td class="fw-bold text-green">${costUnitLabel}</td>
@@ -1628,9 +1628,11 @@ async function saveStockIn(type='vegetable'){
 
   // Find existing product by name (case-insensitive), or auto-create it
   let prod=DB.products.find(p=>p.name.toLowerCase()===productTyped.toLowerCase()&&p.type===type);
+  let isNewProduct=false;
   if(!prod){
     prod={id:genId(),name:productTyped,type,commodity:'',sellUnit:'kg',unit:'kg',reorderLevel:5,sellPrice:0,costPrice:0,shelfLife:null,preferredSupplier:null};
     DB.products.push(prod);
+    isNewProduct=true;
     showToast(`New product "${productTyped}" added to catalog`,'success');
   }
   const productId=prod.id;
@@ -1727,7 +1729,9 @@ async function saveStockIn(type='vegetable'){
     logActivity('AP Auto-Created',`${prod.name} — ${fmt(entry.totalCost)} from Stock IN (Credit)`);
   }
 
+  entry.productName=prod.name; // fallback display if product sync is delayed
   saveDB();
+  if(isNewProduct) await gasPost({action:'add',sheet:'Products',data:prod});
   await gasPost({action:'add',sheet:'StockIn',data:entry});
   closeModal();
   showToast(paymentMethod==='credit'?`Purchase saved ✓ — Added to Accounts Payable 🧾`:`Purchase saved ✓`,'success');
@@ -5837,7 +5841,7 @@ function renderBeginInventory(el, actions){
             const bulkInfo=s.kgPerBulk&&s.kgPerBulk>1?` (${fmtN(s.bulkQty||s.qty)} ${s.bulkUnit||s.sellUnit} × ${s.kgPerBulk} kg)`:'';
             return`<tr>
               <td>${fmtDate(s.date)}</td>
-              <td class="fw-bold">${p?.name||s.productId}</td>
+              <td class="fw-bold">${p?.name||s.productName||s.productId}</td>
               <td>${fmtN(s.bulkQty||s.qty)} ${s.bulkUnit||s.sellUnit}${bulkInfo}</td>
               <td>${s.sellUnit||'kg'}</td>
               ${canSeeCosts()?`<td>${fmt(s.costPerUnit)}/kg</td><td class="fw-bold">${fmt(s.totalCost)}</td>`:''}
