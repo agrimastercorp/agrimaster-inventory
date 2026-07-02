@@ -5730,8 +5730,14 @@ function buildIncomeStatement(){
   const netSales=grossSales-totalSalesDeductions;
 
   // ── COGS ──
-  // Purchases during period (total cost of all stock-in entries in period)
-  const totalPurchases=(DB.stockIn||[]).filter(s=>inPeriod(s.date))
+  const stockInPeriod=(DB.stockIn||[]).filter(s=>inPeriod(s.date));
+  // Beginning Inventory: opening stock entries (isOpeningStock:true) within the period
+  const beginningInventory=stockInPeriod
+    .filter(b=>b.isOpeningStock)
+    .reduce((s,b)=>s+(+b.totalCost||0),0);
+  // Purchases during period (regular stock-in entries, excluding opening stock)
+  const totalPurchases=stockInPeriod
+    .filter(b=>!b.isOpeningStock)
     .reduce((s,b)=>s+(+b.totalCost||0),0);
 
   // Ending Inventory: current remaining value of all stock on hand (at cost, FIFO)
@@ -5740,10 +5746,6 @@ function buildIncomeStatement(){
 
   // COGS from FIFO — actual cost deducted per sale (most accurate)
   const cogs=salesOut.reduce((s,x)=>s+(+x.cogs||0),0);
-
-  // Beginning Inventory derived from accounting equation: BI = COGS + EI − Purchases
-  // This keeps the traditional formula section self-consistent with the FIFO COGS figure
-  const beginningInventory=Math.max(0, cogs + endingInventory - totalPurchases);
   const grossProfit=netSales-cogs;
   const grossMargin=netSales?((grossProfit/netSales)*100).toFixed(1):0;
 
