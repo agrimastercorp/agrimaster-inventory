@@ -1771,6 +1771,14 @@ function openStockInEdit(id){
     <div class="modal-body">
 
       <input type="hidden" id="sie-sellmode" value="${s.sellMode||'kg'}">
+      <input type="hidden" id="sie-productid" value="${s.productId||''}">
+
+      <!-- Product name (editable to fix missing/wrong products) -->
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Product *</label>
+        <input type="text" id="sie-product" value="${p?.name||s.productName||''}" placeholder="Type product name…" autocomplete="off" style="width:100%">
+        ${!p?'<div style="color:#b45309;font-size:12px;margin-top:4px">⚠️ Product not found in catalog — type the correct name and save to fix it.</div>':''}
+      </div>
 
       <!-- Date + Supplier -->
       <div class="form-grid form-grid-2" style="margin-bottom:12px">
@@ -1964,8 +1972,29 @@ async function saveStockInEdit(id){
   if(!s)return;
 
   const sellMode=document.getElementById('sie-sellmode')?.value||s.sellMode||'kg';
-  const p2=DB.products.find(x=>x.id===s.productId);
-  const isFruit2=p2?.type==='fruit'||s.type==='fruit';
+  const typedName=(document.getElementById('sie-product')?.value||'').trim();
+  // Re-link product if name changed or product was missing
+  let p2=DB.products.find(x=>x.id===s.productId);
+  if(typedName){
+    const normalizedTyped=typedName.toLowerCase();
+    const isFruitType=sellMode!=='veg'&&(s.type==='fruit'||p2?.type==='fruit'||sellMode==='kg'||sellMode==='pack');
+    const matchedProd=DB.products.find(x=>x.name.toLowerCase()===normalizedTyped)
+                    ||DB.products.find(x=>x.name.toLowerCase().includes(normalizedTyped));
+    if(matchedProd){
+      p2=matchedProd;
+      s.productId=matchedProd.id;
+      s.productName=matchedProd.name;
+    } else if(!p2||p2.name!==typedName){
+      // Create new product with the typed name
+      const newType=isFruitType?'fruit':'vegetable';
+      p2={id:genId(),name:typedName,type:newType,commodity:'',sellUnit:'kg',unit:'kg',reorderLevel:5,sellPrice:0,costPrice:0};
+      DB.products.push(p2);
+      s.productId=p2.id;
+      s.productName=p2.name;
+      await gasPost({action:'add',sheet:'Products',data:p2});
+    }
+  }
+  const isFruit2=p2?.type==='fruit'||s.type==='fruit'||sellMode==='kg'||sellMode==='pack';
   const newDate=document.getElementById('sie-date').value;
   const newSupplierId=document.getElementById('sie-supplier').value;
   const newPaymentMethod=document.querySelector('input[name="sie-pm"]:checked')?.value||s.paymentMethod||'cash';
