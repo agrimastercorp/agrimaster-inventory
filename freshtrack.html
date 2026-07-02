@@ -1291,27 +1291,28 @@ function renderStockIn(el,actions){
   const vegs=rows.filter(s=>{const p=DB.products.find(x=>x.id===s.productId);return p?.type==='vegetable';});
   const all=rows;
 
+  const _showCost=canSeeCosts();
   function siRows(list){
-    if(!list.length)return`<tr><td colspan="14"><div class="empty-state"><div class="icon">📦</div><h3>No entries yet</h3></div></td></tr>`;
+    if(!list.length)return`<tr><td colspan="${_showCost?14:11}"><div class="empty-state"><div class="icon">📦</div><h3>No entries yet</h3></div></td></tr>`;
     return list.map(s=>{
       const p=DB.products.find(x=>x.id===s.productId);
       const isFruit=p?.type==='fruit';
       const isPackMode=s.sellMode==='pack';
-      let purchasedStr, totalLabel, costUnitLabel, remainLabel;
+      let purchasedStr, totalLabel, costUnitLabel='', remainLabel;
       if(isFruit && isPackMode){
         purchasedStr=`${fmtN(s.bulkQty)} ${s.bulkUnit} × ${s.packsPerBulk} packs${s.packSizeG?' ('+s.packSizeG+'g)':''}`;
         totalLabel=`${fmtN(s.qty)} packs`;
-        costUnitLabel=`${fmt(s.costPerUnit)}/pack`;
+        if(_showCost) costUnitLabel=`${fmt(s.costPerUnit)}/pack`;
         remainLabel=`${fmtN(s.remainingQty||0)} packs`;
       } else if(isFruit){
         purchasedStr=`${fmtN(s.bulkQty||s.qty)} ${s.bulkUnit||'box'} × ${fmtN(s.kgPerBulk||1)} kg`;
         totalLabel=`${fmtN(s.qty)} kg`;
-        costUnitLabel=`${fmt(s.costPerUnit)}/kg`;
+        if(_showCost) costUnitLabel=`${fmt(s.costPerUnit)}/kg`;
         remainLabel=`${fmtN(s.remainingQty||0)} kg`;
       } else {
         purchasedStr=`${fmtN(s.qty)} ${s.sellUnit||'kg'}`;
         totalLabel=`${fmtN(s.qty)} ${s.sellUnit||'kg'}`;
-        costUnitLabel=`${fmt(s.costPerUnit)}/${s.sellUnit||'kg'}`;
+        if(_showCost) costUnitLabel=`${fmt(s.costPerUnit)}/${s.sellUnit||'kg'}`;
         remainLabel=`${fmtN(s.remainingQty||0)} ${s.sellUnit||'kg'}`;
       }
       const pmBadge=s.paymentMethod==='credit'?`<span class="badge" style="background:#fff7ed;color:#b45309;border:1px solid #f59e0b">🏦 Credit</span>`:s.paymentMethod==='gcash'?`<span class="badge badge-blue">📱 GCash</span>`:`<span class="badge badge-green">💵 Cash</span>`;
@@ -1337,7 +1338,6 @@ function renderStockIn(el,actions){
     }).join('');
   }
 
-  const _showCost=canSeeCosts();
   const thead=`<thead><tr>
     <th style="width:36px"><input type="checkbox" class="bulk-select-all" onchange="toggleSelectAllCb(this)" title="Select all"></th>
     <th>Date</th><th>Supplier</th><th>Product</th>
@@ -1463,10 +1463,10 @@ function openStockInForm(type='vegetable'){
           <label>No. of Packages *</label>
           <input type="number" id="si-num-pkg" min="0.01" step="0.01" placeholder="e.g. 2" oninput="siFruitRecalc()">
         </div>
-        <div class="form-group">
+        ${canSeeCosts()?`<div class="form-group">
           <label>Cost per Package (₱) *</label>
           <input type="number" id="si-cost-pkg" min="0" step="0.01" placeholder="e.g. 2500" oninput="siFruitRecalc()">
-        </div>
+        </div>`:`<input type="hidden" id="si-cost-pkg" value="0">`}
       </div>
 
       <!-- PER KG fields -->
@@ -1512,10 +1512,10 @@ function openStockInForm(type='vegetable'){
           <label>Quantity *</label>
           <input type="number" id="si-veg-qty" min="0.01" step="0.01" placeholder="e.g. 50" oninput="siVegRecalc()">
         </div>
-        <div class="form-group">
+        ${canSeeCosts()?`<div class="form-group">
           <label>Cost per kg (₱) *</label>
           <input type="number" id="si-veg-cost-kg" min="0" step="0.01" placeholder="e.g. 45" oninput="siVegRecalc()">
-        </div>
+        </div>`:`<input type="hidden" id="si-veg-cost-kg" value="0">`}
       </div>
       `}
 
@@ -2116,15 +2116,30 @@ async function importStockInCSV(input){
   const file=input.files[0];
   if(!file)return;
   const text=await file.text();
-  const lines=text.split('\n').filter(l=>l.trim());
+  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l=>l.trim());
   if(lines.length<2){showToast('CSV is empty','error');return;}
   const headers=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,''));
+  if(!headers.includes('id')){showToast('Invalid CSV — missing "id" column. Please export from this app first.','error');return;}
   const col=h=>headers.indexOf(h);
 
-  let updated=0, created=0, skipped=0;
+  // Robust CSV row parser — handles quoted fields with commas inside
+  function parseCSVRow(line){
+    const result=[];
+    let cur='', inQuote=false;
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(ch==='"'){if(inQuote&&line[i+1]==='"'){cur+='"';i++;}else inQuote=!inQuote;}
+      else if(ch===','&&!inQuote){result.push(cur);cur='';}
+      else cur+=ch;
+    }
+    result.push(cur);
+    return result;
+  }
+
+  let updated=0, skipped=0;
   for(let i=1;i<lines.length;i++){
-    const vals=lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g)||lines[i].split(',');
-    const get=h=>{const v=vals[col(h)]||''; return v.replace(/^"|"$/g,'').trim();};
+    const vals=parseCSVRow(lines[i]);
+    const get=h=>{const idx=col(h); return idx>=0?(vals[idx]||'').trim().replace(/^"|"$/g,''):'';};
 
     const id=get('id');
     const productName=get('productName');
@@ -6220,7 +6235,7 @@ async function saveBeginInventory(){
     if(!DB.products)DB.products=[];
     let prod=DB.products.find(p=>p.name.toLowerCase()===rawName.toLowerCase());
     if(!prod){
-      prod={id:genId(),name:rawName,type:prodType,unit:sellUnit};
+      prod={id:genId(),name:rawName,type:prodType,commodity:'',sellUnit,unit:sellUnit,reorderLevel:5,sellPrice:0,costPrice:0,shelfLife:null,preferredSupplier:null};
       DB.products.push(prod);
       await gasPost({action:'add',sheet:'Products',data:prod});
     }
