@@ -1202,8 +1202,16 @@ function renderDashboard(el){
   const todayRevenue=todaySales.reduce((s,x)=>s+(+x.totalRevenue||0),0);
   const todayCogs=todaySales.reduce((s,x)=>s+(+x.cogs||0),0);
   const todayProfit=todayRevenue-todayCogs;
-  const totalStock=DB.products.map(p=>({p,qty:getStockLevel(p.id)}));
-  const lowStock=totalStock.filter(x=>x.qty<=(+x.p.reorderLevel||5)&&x.qty>0);
+  // Group by name to avoid duplicate ghost products triggering false alerts
+  const stockByName=new Map();
+  DB.products.forEach(p=>{
+    const key=p.name.toLowerCase().trim();
+    const qty=getStockLevel(p.id);
+    if(!stockByName.has(key)) stockByName.set(key,{name:p.name,qty:0,reorderLevel:+p.reorderLevel||5});
+    stockByName.get(key).qty+=qty;
+  });
+  const totalStock=[...stockByName.values()];
+  const lowStock=totalStock.filter(x=>x.qty>0&&x.qty<=x.reorderLevel);
   const outOfStock=totalStock.filter(x=>x.qty<=0);
   // Total inventory value = sum of (remainingQty × costPerUnit) across all active batches
   const totalInventoryValue=DB.stockIn.filter(b=>(b.remainingQty||0)>0).reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||b.costPerBulk||0)),0);
@@ -1216,7 +1224,7 @@ function renderDashboard(el){
     expiryAlerts=`<div class="alert alert-danger mb-3">⚠ <strong>${expiringSoon.length} batch(es)</strong> expiring within 3 days: ${expiringSoon.map(b=>productName(b.productId)+' ('+fmtDate(b.expiryDate)+')').join(', ')}</div>`;
   }
   if(outOfStock.length){
-    expiryAlerts+=`<div class="alert alert-warning mb-3">📦 <strong>${outOfStock.length} product(s)</strong> out of stock: ${outOfStock.map(x=>x.p.name).join(', ')}</div>`;
+    expiryAlerts+=`<div class="alert alert-warning mb-3">📦 <strong>${outOfStock.length} product(s)</strong> out of stock: ${outOfStock.map(x=>x.name).join(', ')}</div>`;
   }
 
   el.innerHTML=`
