@@ -1282,7 +1282,9 @@ function renderDashboard(el){
 function renderStockIn(el,actions){
   actions.innerHTML=`
     <button class="btn btn-warning" onclick="openStockInForm('fruit')" style="color:#fff">🍋 Fruit Purchase</button>
-    <button class="btn btn-primary" onclick="openStockInForm('vegetable')">🥦 Vegetable Purchase</button>`;
+    <button class="btn btn-primary" onclick="openStockInForm('vegetable')">🥦 Vegetable Purchase</button>
+    <button class="btn btn-secondary" onclick="exportStockInCSV()">⬇️ Export CSV</button>
+    <label class="btn btn-secondary" style="cursor:pointer;margin:0">⬆️ Import CSV<input type="file" accept=".csv" style="display:none" onchange="importStockInCSV(this)"></label>`;
 
   const rows=DB.stockIn.slice().reverse();
   const fruits=rows.filter(s=>{const p=DB.products.find(x=>x.id===s.productId);return p?.type==='fruit';});
@@ -2080,6 +2082,124 @@ async function saveStockInEdit(id){
   await gasPost({action:'update',sheet:'StockIn',data:s});
   closeModal();
   showToast('Purchase updated ✓','success');
+  renderPage('stockin');
+}
+
+function exportStockInCSV(){
+  const headers=['id','date','productName','type','sellMode','supplier','packaging','numPackages','kgPerPackage','packsPerPackage','packSizeG','costPerPackage','totalQty','sellUnit','costPerUnit','totalCost','remainingQty','paymentMethod'];
+  const rows=DB.stockIn.slice().reverse().map(s=>{
+    const p=DB.products.find(x=>x.id===s.productId);
+    const supplierName=DB.suppliers.find(x=>x.id===s.supplierId)?.name||'';
+    return [
+      s.id,
+      s.date||'',
+      p?.name||s.productName||'',
+      p?.type||s.type||'',
+      s.sellMode||'kg',
+      supplierName,
+      s.bulkUnit||'',
+      s.bulkQty||'',
+      s.kgPerBulk||'',
+      s.packsPerBulk||'',
+      s.packSizeG||'',
+      s.costPerBulk||'',
+      s.qty||'',
+      s.sellUnit||'kg',
+      s.costPerUnit||'',
+      s.totalCost||'',
+      s.remainingQty||'',
+      s.paymentMethod||'cash'
+    ].map(v=>typeof v==='string'&&v.includes(',')?`"${v}"`:v);
+  });
+  const csv=[headers,...rows].map(r=>r.join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`purchases_${today()}.csv`;
+  a.click();
+  showToast('CSV exported — open in Excel, edit, then import back','success');
+}
+
+async function importStockInCSV(input){
+  const file=input.files[0];
+  if(!file)return;
+  const text=await file.text();
+  const lines=text.split('\n').filter(l=>l.trim());
+  if(lines.length<2){showToast('CSV is empty','error');return;}
+  const headers=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,''));
+  const col=h=>headers.indexOf(h);
+
+  let updated=0, created=0, skipped=0;
+  for(let i=1;i<lines.length;i++){
+    const vals=lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g)||lines[i].split(',');
+    const get=h=>{const v=vals[col(h)]||''; return v.replace(/^"|"$/g,'').trim();};
+
+    const id=get('id');
+    const productName=get('productName');
+    const supplierName=get('supplier');
+    const date=get('date');
+    const paymentMethod=get('paymentMethod')||'cash';
+    const packaging=get('packaging');
+    const numPackages=parseFloat(get('numPackages'))||0;
+    const kgPerPackage=parseFloat(get('kgPerPackage'))||0;
+    const packsPerPackage=parseFloat(get('packsPerPackage'))||0;
+    const packSizeG=parseFloat(get('packSizeG'))||0;
+    const costPerPackage=parseFloat(get('costPerPackage'))||0;
+    const totalCost=parseFloat(get('totalCost'))||0;
+    const type=get('type')||'fruit';
+    const sellMode=get('sellMode')||'kg';
+
+    const s=DB.stockIn.find(x=>x.id===id);
+    if(!s){skipped++;continue;}
+
+    // Fix product link
+    if(productName){
+      const norm=productName.toLowerCase();
+      let prod=DB.products.find(x=>x.name.toLowerCase()===norm);
+      if(!prod){
+        prod={id:genId(),name:productName,type,commodity:'',sellUnit:sellMode==='kg'?'kg':'pack',unit:'kg',reorderLevel:5,sellPrice:0,costPrice:0};
+        DB.products.push(prod);
+        await gasPost({action:'add',sheet:'Products',data:prod});
+      }
+      s.productId=prod.id;
+      s.productName=prod.name;
+    }
+
+    // Fix supplier link
+    if(supplierName){
+      const sup=DB.suppliers.find(x=>x.name.toLowerCase()===supplierName.toLowerCase());
+      if(sup) s.supplierId=sup.id;
+    }
+
+    // Update fields
+    if(date) s.date=date;
+    if(paymentMethod) s.paymentMethod=paymentMethod;
+    if(packaging) s.bulkUnit=packaging;
+    if(numPackages) s.bulkQty=numPackages;
+    if(kgPerPackage) s.kgPerBulk=kgPerPackage;
+    if(packsPerPackage) s.packsPerBulk=packsPerPackage;
+    if(packSizeG) s.packSizeG=packSizeG;
+    if(costPerPackage){ s.costPerBulk=costPerPackage; }
+    if(sellMode==='kg'&&numPackages&&kgPerPackage){
+      s.qty=numPackages*kgPerPackage;
+      s.remainingQty=Math.min(s.remainingQty||s.qty,s.qty);
+      s.costPerUnit=costPerPackage/kgPerPackage;
+      s.totalCost=numPackages*costPerPackage;
+    } else if(sellMode==='pack'&&numPackages&&packsPerPackage){
+      s.qty=numPackages*packsPerPackage;
+      s.remainingQty=Math.min(s.remainingQty||s.qty,s.qty);
+      s.costPerUnit=numPackages>0?costPerPackage/packsPerPackage:s.costPerUnit;
+      s.totalCost=numPackages*costPerPackage;
+    } else if(totalCost){
+      s.totalCost=totalCost;
+    }
+    s.type=type; s.sellMode=sellMode;
+    await gasPost({action:'update',sheet:'StockIn',data:s});
+    updated++;
+  }
+  saveDB();
+  input.value='';
+  showToast(`Import done — ${updated} updated, ${skipped} skipped`,'success');
   renderPage('stockin');
 }
 
