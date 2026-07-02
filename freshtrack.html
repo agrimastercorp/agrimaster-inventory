@@ -1788,11 +1788,26 @@ function openStockInEdit(id){
           <input type="number" id="sie-qty" value="${s.qty||0}" min="0.01" step="0.01" oninput="sieRecalc()">
         </div>
 
-        ${canSeeCosts()?`<div class="form-group" style="grid-column:span 2">
+        ${isFruit?`<div class="form-group">
+          <label>kg per ${s.bulkUnit||'box'}</label>
+          <input type="number" id="sie-kgperbulk" value="${s.kgPerBulk||''}" min="0.01" step="0.01" placeholder="e.g. 8.5" oninput="sieRecalc()">
+        </div>
+        <div class="form-group">
+          <label>No. of ${s.bulkUnit||'box'}es</label>
+          <input type="number" id="sie-bulkqty" value="${s.bulkQty||''}" min="0.01" step="0.01" placeholder="e.g. 5" oninput="sieRecalc()">
+        </div>`:''}
+
+        ${canSeeCosts()?`<div class="form-group" ${isFruit?'':'style="grid-column:span 2"'}>
           <label>Cost per ${isPackMode?'Pack':s.sellUnit||'kg'} (auto-computed)</label>
           <input id="sie-costperunit" readonly style="background:var(--bg-secondary);font-weight:700"
             value="${s.costPerUnit?'₱'+fmtN(s.costPerUnit):''}">
-        </div>`:`<input type="hidden" id="sie-costperunit" value="${s.costPerUnit||0}">`}
+        </div>
+        ${isFruit?`<div class="form-group">
+          <label>Cost per kg (auto-computed)</label>
+          <input id="sie-costperkg" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)"
+            value="${s.kgPerBulk&&s.bulkQty?'₱'+fmtN(s.totalCost/(s.bulkQty*s.kgPerBulk)):''}">
+        </div>`:''}
+        `:`<input type="hidden" id="sie-costperunit" value="${s.costPerUnit||0}">`}
 
         <div class="form-group" style="grid-column:span 2">
           <label>Payment Method</label>
@@ -1821,8 +1836,15 @@ function openStockInEdit(id){
 function sieRecalc(){
   const totalCost=+document.getElementById('sie-totalcost')?.value||0;
   const qty=+document.getElementById('sie-qty')?.value||0;
+  const kgPerBulk=+document.getElementById('sie-kgperbulk')?.value||0;
+  const bulkQty=+document.getElementById('sie-bulkqty')?.value||0;
   const el=document.getElementById('sie-costperunit');
   if(el) el.value=qty>0?'₱'+fmtN(totalCost/qty):'';
+  const kgEl=document.getElementById('sie-costperkg');
+  if(kgEl){
+    const totalKg=bulkQty>0&&kgPerBulk>0?bulkQty*kgPerBulk:0;
+    kgEl.value=totalKg>0?'₱'+fmtN(totalCost/totalKg):'';
+  }
 }
 
 function siePmToggle(){
@@ -1848,13 +1870,18 @@ async function saveStockInEdit(id){
   const newCostPerUnit=newTotalCost/newQty;
   const oldPaymentMethod=s.paymentMethod||'cash';
 
+  const newKgPerBulk=+document.getElementById('sie-kgperbulk')?.value||s.kgPerBulk||0;
+  const newBulkQty=+document.getElementById('sie-bulkqty')?.value||s.bulkQty||0;
+
   s.date=newDate;
   s.supplierId=newSupplierId;
   s.totalCost=newTotalCost;
   s.qty=newQty;
-  s.remainingQty=Math.min(s.remainingQty||newQty, newQty); // don't inflate remaining beyond new qty
+  s.remainingQty=Math.min(s.remainingQty||newQty, newQty);
   s.costPerUnit=newCostPerUnit;
-  s.costPerBulk=s.bulkQty?newTotalCost/s.bulkQty:newTotalCost;
+  s.costPerBulk=newBulkQty?newTotalCost/newBulkQty:newTotalCost;
+  if(newKgPerBulk) s.kgPerBulk=newKgPerBulk;
+  if(newBulkQty) s.bulkQty=newBulkQty;
   s.paymentMethod=newPaymentMethod;
 
   // If payment method changed to/from credit — update Accounts Payable
