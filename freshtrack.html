@@ -1627,13 +1627,21 @@ async function saveStockIn(type='vegetable'){
   if(!productTyped){showToast('Enter a product name','error');return;}
 
   // Find existing product by name (case-insensitive), or auto-create it
-  let prod=DB.products.find(p=>p.name.toLowerCase()===productTyped.toLowerCase()&&p.type===type);
+  const normalizedName=productTyped.toLowerCase().trim().replace(/\s+/g,' ');
+  // Match by name+type first, then name-only (covers mis-classified products)
+  let prod=DB.products.find(p=>p.name.toLowerCase().trim()===normalizedName&&p.type===type)
+         ||DB.products.find(p=>p.name.toLowerCase().trim()===normalizedName);
   let isNewProduct=false;
   if(!prod){
     prod={id:genId(),name:productTyped,type,commodity:'',sellUnit:'kg',unit:'kg',reorderLevel:5,sellPrice:0,costPrice:0,shelfLife:null,preferredSupplier:null};
     DB.products.push(prod);
     isNewProduct=true;
     showToast(`New product "${productTyped}" added to catalog`,'success');
+  } else if(prod.type!==type){
+    // Correct the type to match current entry
+    prod.type=type;
+    saveDB();
+    await gasPost({action:'update',sheet:'Products',data:prod});
   }
   const productId=prod.id;
   const supplierId=document.getElementById('si-supplier')?.value||'';
