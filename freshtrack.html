@@ -1768,6 +1768,7 @@ function openStockInEdit(id){
         <div style="color:var(--text-muted);margin-top:2px">${purchaseSummary}${canSeeCosts()?` &nbsp;|&nbsp; Total Cost: <strong>${fmt(s.totalCost)}</strong>`:''}</div>
       </div>
 
+      <input type="hidden" id="sie-sellmode" value="${s.sellMode||'kg'}">
       <div class="form-grid form-grid-2">
 
         <div class="form-group">
@@ -1835,16 +1836,18 @@ function openStockInEdit(id){
 
 function sieRecalc(){
   const totalCost=+document.getElementById('sie-totalcost')?.value||0;
-  const qty=+document.getElementById('sie-qty')?.value||0;
   const kgPerBulk=+document.getElementById('sie-kgperbulk')?.value||0;
   const bulkQty=+document.getElementById('sie-bulkqty')?.value||0;
+  const sellMode=document.getElementById('sie-sellmode')?.value||'kg';
+  const qtyEl=document.getElementById('sie-qty');
+  // For kg mode: auto-update total kg from bulkQty × kgPerBulk
+  if(sellMode==='kg'&&kgPerBulk>0&&bulkQty>0&&qtyEl) qtyEl.value=fmtN(bulkQty*kgPerBulk);
+  const qty=+qtyEl?.value||0;
   const el=document.getElementById('sie-costperunit');
   if(el) el.value=qty>0?'₱'+fmtN(totalCost/qty):'';
+  const totalKg=bulkQty>0&&kgPerBulk>0?bulkQty*kgPerBulk:0;
   const kgEl=document.getElementById('sie-costperkg');
-  if(kgEl){
-    const totalKg=bulkQty>0&&kgPerBulk>0?bulkQty*kgPerBulk:0;
-    kgEl.value=totalKg>0?'₱'+fmtN(totalCost/totalKg):'';
-  }
+  if(kgEl) kgEl.value=totalKg>0?'₱'+fmtN(totalCost/totalKg):'';
 }
 
 function siePmToggle(){
@@ -1870,8 +1873,10 @@ async function saveStockInEdit(id){
   const newCostPerUnit=newTotalCost/newQty;
   const oldPaymentMethod=s.paymentMethod||'cash';
 
-  const newKgPerBulk=+document.getElementById('sie-kgperbulk')?.value||s.kgPerBulk||0;
-  const newBulkQty=+document.getElementById('sie-bulkqty')?.value||s.bulkQty||0;
+  const p2=DB.products.find(x=>x.id===s.productId);
+  const isFruit2=p2?.type==='fruit'||s.type==='fruit';
+  const newKgPerBulk=isFruit2?(+document.getElementById('sie-kgperbulk')?.value||s.kgPerBulk||0):s.kgPerBulk||0;
+  const newBulkQty=isFruit2?(+document.getElementById('sie-bulkqty')?.value||s.bulkQty||0):s.bulkQty||0;
 
   s.date=newDate;
   s.supplierId=newSupplierId;
@@ -1879,7 +1884,7 @@ async function saveStockInEdit(id){
   s.qty=newQty;
   s.remainingQty=Math.min(s.remainingQty||newQty, newQty);
   s.costPerUnit=newCostPerUnit;
-  s.costPerBulk=newBulkQty?newTotalCost/newBulkQty:newTotalCost;
+  s.costPerBulk=newBulkQty?newTotalCost/newBulkQty:s.costPerBulk||newTotalCost;
   if(newKgPerBulk) s.kgPerBulk=newKgPerBulk;
   if(newBulkQty) s.bulkQty=newBulkQty;
   s.paymentMethod=newPaymentMethod;
@@ -5392,7 +5397,7 @@ function buildIncomeStatement(){
 
   // Ending Inventory: current remaining value of all stock on hand (at cost, FIFO)
   const endingInventory=(DB.stockIn||[])
-    .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||0)),0);
+    .reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||+b.costPerBulk||0)),0);
 
   // COGS from FIFO — actual cost deducted per sale (most accurate)
   const cogs=salesOut.reduce((s,x)=>s+(+x.cogs||0),0);
