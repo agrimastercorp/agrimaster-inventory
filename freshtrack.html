@@ -2590,13 +2590,13 @@ function exportExpensesReport(){
 // Check if an invoice number has been covered by a payment
 function isInvoicePaid(invoiceNumber){
   if(!invoiceNumber)return false;
-  const target=invoiceNumber.trim().toLowerCase();
+  const target=String(invoiceNumber).trim().toLowerCase();
   return DB.payments.some(p=>{
     // Support both old single invoiceNumber and new invoiceNumbers array
     const nums=Array.isArray(p.invoiceNumbers)
       ? p.invoiceNumbers
       : (p.invoiceNumber?[p.invoiceNumber]:[]);
-    return nums.some(n=>n.trim().toLowerCase()===target);
+    return nums.some(n=>String(n).trim().toLowerCase()===target);
   });
 }
 
