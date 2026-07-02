@@ -674,6 +674,24 @@ async function syncFromGAS(){
       });
     }
   }
+  // Deduplicate products by name — keep the one with the most stock, remap stockIn refs
+  if(Array.isArray(DB.products)){
+    const seen=new Map();
+    DB.products.forEach(p=>{
+      const key=p.name.toLowerCase().trim();
+      if(!seen.has(key)){seen.set(key,p);}
+      else{
+        const existing=seen.get(key);
+        // Keep the one with more stock; remap the loser's stockIn entries to the winner
+        const existingStock=getStockLevel(existing.id);
+        const thisStock=getStockLevel(p.id);
+        const [winner,loser]=thisStock>existingStock?[p,existing]:[existing,p];
+        seen.set(key,winner);
+        DB.stockIn.forEach(b=>{if(b.productId===loser.id)b.productId=winner.id;});
+      }
+    });
+    DB.products=[...seen.values()];
+  }
   // Merge settings from GAS (users, shopName) but keep local gasUrl and apiKey
   if(data.Settings&&Array.isArray(data.Settings)&&data.Settings.length){
     const s=data.Settings[0];
@@ -3066,12 +3084,19 @@ function renderProducts(el,actions){
   const isOwner=SESSION.role==='owner';
   actions.innerHTML=isOwner?`<button class="btn btn-primary" onclick="openProductForm()">+ Add Product</button>`:'';
 
-  // Build summary rows — group by product, compute stock value from active batches
+  // Build summary rows — group by name to avoid showing duplicates
   function buildSummary(list){
-    return list.map(p=>{
-      const inStock=getStockLevel(p.id);
+    // Merge products with the same name into one row
+    const nameMap=new Map();
+    list.forEach(p=>{
+      const key=p.name.toLowerCase().trim();
+      if(!nameMap.has(key)) nameMap.set(key,{primary:p,ids:[p.id]});
+      else nameMap.get(key).ids.push(p.id);
+    });
+    return [...nameMap.values()].map(({primary:p,ids})=>{
+      const inStock=ids.reduce((s,id)=>s+getStockLevel(id),0);
       const safetyStock=+p.reorderLevel||5;
-      const activeBatches=DB.stockIn.filter(b=>b.productId===p.id&&(b.remainingQty||0)>0);
+      const activeBatches=DB.stockIn.filter(b=>ids.includes(b.productId)&&(b.remainingQty||0)>0);
       const stockValue=activeBatches.reduce((s,b)=>s+((+b.remainingQty||0)*(+b.costPerUnit||+b.costPerBulk||0)),0);
       const unit=p.sellUnit||p.unit||'kg';
       const status=inStock<=0?'OUT':inStock<=safetyStock?'LOW':'OK';
