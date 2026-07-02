@@ -1894,6 +1894,12 @@ function openStockInEdit(id){
       </div>`:'<input type="hidden" id="sie-totalcost" value="${s.totalCost||0}">'}
       `}
 
+      <!-- Remaining Qty (owner can correct if data was corrupted) -->
+      <div class="form-group" style="margin-top:10px">
+        <label>Remaining Qty <span style="font-size:11px;color:#6b7280">(correct this if stock shows wrong after edit)</span></label>
+        <input type="number" id="sie-remainingqty" value="${+(+(s.remainingQty??s.qty??0)).toFixed(2)}" min="0" step="0.01" style="width:100%">
+      </div>
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -2043,9 +2049,10 @@ async function saveStockInEdit(id){
   s.date=newDate;
   s.supplierId=newSupplierId;
   s.totalCost=newTotalCost;
+  const _manualRemaining=document.getElementById('sie-remainingqty');
   const _soldQty=Math.max(0,(+s.qty||0)-(+s.remainingQty??+s.qty??0));
   s.qty=newQty;
-  s.remainingQty=Math.max(0,newQty-_soldQty);
+  s.remainingQty=_manualRemaining?Math.min(+_manualRemaining.value||0,newQty):Math.max(0,newQty-_soldQty);
   s.costPerUnit=newCostPerUnit;
   s.costPerBulk=newCostPerBulk;
   s.bulkQty=newBulkQty;
