@@ -566,6 +566,16 @@ function loadDB(){
   // Migrate old branding
   if(!DB.settings)DB.settings={};
   if(!DB.settings.shopName||DB.settings.shopName==='FreshTrack')DB.settings.shopName='Agrimaster Corporation';
+  if(!DB.stockIn)DB.stockIn=[];
+  if(!DB.stockOut)DB.stockOut=[];
+  if(!DB.spoilage)DB.spoilage=[];
+  if(!DB.expenses)DB.expenses=[];
+  if(!DB.payments)DB.payments=[];
+  if(!DB.accountsPayable)DB.accountsPayable=[];
+  if(!DB.products)DB.products=[];
+  if(!DB.suppliers)DB.suppliers=[];
+  if(!DB.customers)DB.customers=[];
+  if(!DB.activityLog)DB.activityLog=[];
   if(!DB.assets)DB.assets=[];
   if(!DB.loans)DB.loans=[];
   if(!DB.purchaseOrders)DB.purchaseOrders=[];
@@ -2594,7 +2604,7 @@ function renderStockOut(el,actions){
   actions.innerHTML=`
     <button class="btn btn-secondary" onclick="guardReport('exportARSummary',exportARSummary)">📊 Export AR Summary</button>
     <button class="btn btn-primary" onclick="openStockOutForm()">+ Add Sale</button>`;
-  const rows=DB.stockOut.slice().reverse();
+  const rows=(DB.stockOut||[]).slice().reverse();
 
   // Totals summary
   const totRevenue=rows.reduce((s,x)=>s+(+x.totalRevenue||0),0);
