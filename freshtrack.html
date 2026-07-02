@@ -1426,12 +1426,11 @@ function openStockInForm(type='vegetable'){
       <div class="form-grid" style="margin-bottom:12px">
         <div class="form-group">
           <label>Product *</label>
-          <input type="text" id="si-product" list="si-product-list"
+          <input type="text" id="si-product"
             placeholder="Type product name…"
             autocomplete="off"
             style="width:100%">
-          <datalist id="si-product-list">${buildProductSuggestions()}</datalist>
-          <span class="form-note">Type freely or pick from existing products</span>
+          <span class="form-note">Type any name — new products are added automatically</span>
         </div>
       </div>
 
