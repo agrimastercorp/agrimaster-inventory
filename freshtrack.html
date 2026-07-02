@@ -1825,8 +1825,8 @@ function openStockInEdit(id){
           <input type="number" id="sie-bulkqty" value="${s.bulkQty||''}" min="0.01" step="0.01" oninput="sieRecalc()">
         </div>
         ${canSeeCosts()?`<div class="form-group"><label>Cost per Package (₱) *</label>
-          <input type="number" id="sie-costperbulk" value="${fmtN(initCostPerBulk)}" min="0" step="0.01" oninput="sieRecalc()">
-        </div>`:`<input type="hidden" id="sie-costperbulk" value="${initCostPerBulk}">`}
+          <input type="number" id="sie-costperbulk" value="${+(+initCostPerBulk||0).toFixed(2)}" min="0" step="0.01" oninput="sieRecalc()">
+        </div>`:`<input type="hidden" id="sie-costperbulk" value="${+(+initCostPerBulk||0).toFixed(2)}">`}
       </div>
 
       ${!isPackMode?`
@@ -1886,8 +1886,8 @@ function openStockInEdit(id){
           <input type="number" id="sie-qty" value="${s.qty||0}" min="0.01" step="0.01" oninput="sieRecalc()">
         </div>
         ${canSeeCosts()?`<div class="form-group"><label>Cost per unit (₱) *</label>
-          <input type="number" id="sie-costperbulk" value="${fmtN(s.costPerUnit||0)}" min="0" step="0.01" oninput="sieRecalc()">
-        </div>`:`<input type="hidden" id="sie-costperbulk" value="${s.costPerUnit||0}">`}
+          <input type="number" id="sie-costperbulk" value="${+(+(s.costPerUnit||0)).toFixed(2)}" min="0" step="0.01" oninput="sieRecalc()">
+        </div>`:`<input type="hidden" id="sie-costperbulk" value="${+(+(s.costPerUnit||0)).toFixed(2)}">`}
       </div>
       ${canSeeCosts()?`<div class="form-group" style="margin-bottom:10px"><label>Total Cost (auto-computed)</label>
         <input id="sie-totalcost-display" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" placeholder="Auto">
@@ -2043,8 +2043,9 @@ async function saveStockInEdit(id){
   s.date=newDate;
   s.supplierId=newSupplierId;
   s.totalCost=newTotalCost;
+  const _soldQty=Math.max(0,(+s.qty||0)-(+s.remainingQty??+s.qty??0));
   s.qty=newQty;
-  s.remainingQty=Math.min(s.remainingQty||newQty, newQty);
+  s.remainingQty=Math.max(0,newQty-_soldQty);
   s.costPerUnit=newCostPerUnit;
   s.costPerBulk=newCostPerBulk;
   s.bulkQty=newBulkQty;
