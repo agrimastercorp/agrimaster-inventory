@@ -1263,7 +1263,7 @@ function renderDashboard(el){
                 if(r.ids.includes(b.productId)){r.value+=(+b.remainingQty||0)*(+b.costPerUnit||+b.costPerBulk||0);break;}
               }
             });
-            const rows=[...grouped.values()].slice(0,8);
+            const rows=[...grouped.values()].sort((a,b)=>a.qty-b.qty);
             return rows.map(r=>{const low=r.qty<=r.reorderLevel;return`
             <tr><td>${r.name}</td><td class="fw-bold">${fmtN(r.qty)}</td><td style="${r.qty<=0?'color:var(--danger)':''}">${r.unit}</td>
             ${canSeeCosts()?`<td class="fw-bold">${fmt(r.value)}</td>`:''}
