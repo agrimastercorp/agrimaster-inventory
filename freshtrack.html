@@ -6204,6 +6204,23 @@ function renderBeginInventory(el, actions){
       </table>
     </div>
   </div>`:''}
+  ${(()=>{
+    // Show unregistered purchases so user can recover/mark them as opening stock
+    const unregistered=(DB.stockIn||[]).filter(s=>!s.isOpeningStock&&!_openingIds.has(s.id));
+    if(!unregistered.length)return'';
+    // Group by date
+    const byDate=new Map();
+    unregistered.forEach(s=>{const d=s.date?.slice(0,10)||'unknown';if(!byDate.has(d))byDate.set(d,[]);byDate.get(d).push(s);});
+    const dateOpts=[...byDate.keys()].sort().reverse().map(d=>`<option value="${d}">${d} (${byDate.get(d).length} entries)</option>`).join('');
+    return`<div class="card" style="margin-bottom:20px;border:1.5px dashed var(--warning)">
+      <div style="font-weight:700;font-size:14px;margin-bottom:6px">🔧 Recover Existing Entries as Opening Stock</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">If your beginning inventory entries are not showing above, select the date you encoded them and click Register.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="bi-recover-date" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border)">${dateOpts}</select>
+        <button class="btn btn-warning" onclick="recoverOpeningStockByDate()">✅ Register as Opening Stock</button>
+      </div>
+    </div>`;
+  })()}
   <div class="card">
     <div style="font-weight:700;font-size:16px;margin-bottom:4px">➕ Add Opening Stock</div>
     <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">Enter your existing stock before you started using the system. Each row feeds into FIFO.</div>
@@ -6341,6 +6358,21 @@ async function saveBeginInventory(){
     showToast(`${saved} opening stock entr${saved===1?'y':'ies'} saved ✓`,'success');
     renderPage('begininventory');
   }
+}
+
+function recoverOpeningStockByDate(){
+  const date=document.getElementById('bi-recover-date')?.value;
+  if(!date){showToast('Please select a date','error');return;}
+  if(!DB.settings.openingStockIds)DB.settings.openingStockIds=[];
+  const entries=(DB.stockIn||[]).filter(s=>s.date?.slice(0,10)===date&&!s.isOpeningStock&&!DB.settings.openingStockIds.includes(s.id));
+  if(!entries.length){showToast('No unregistered entries found for that date','warning');return;}
+  entries.forEach(s=>{
+    s.isOpeningStock=true;
+    DB.settings.openingStockIds.push(s.id);
+  });
+  saveDB();
+  showToast(`${entries.length} entr${entries.length===1?'y':'ies'} registered as Opening Stock ✓`,'success');
+  renderPage('begininventory');
 }
 
 async function deleteBeginEntry(id){
