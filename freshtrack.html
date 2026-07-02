@@ -1855,8 +1855,8 @@ function openStockInEdit(id){
       </div>
       ${s.kgPerBulk?`<div class="form-group" style="margin-bottom:10px"><label>Cost per kg</label>
         <input id="sie-costperkg" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" value="${initCostPerKg?'₱'+fmtN(initCostPerKg):''}">
-      </div>`:'<input type="hidden" id="sie-costperkg" value="">
-      <input type="hidden" id="sie-costperunit" value="${s.costPerUnit||0}">'}`:''}
+      </div>`:`<input type="hidden" id="sie-costperkg" value=""><input type="hidden" id="sie-costperunit" value="${s.costPerUnit||0}">`}`:''}
+
       `}
 
       ${canSeeCosts()?`
