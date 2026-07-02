@@ -579,6 +579,12 @@ function loadDB(){
   if(!DB.assets)DB.assets=[];
   if(!DB.loans)DB.loans=[];
   if(!DB.purchaseOrders)DB.purchaseOrders=[];
+  if(!DB.settings.openingStockIds)DB.settings.openingStockIds=[];
+  // Backfill: register any isOpeningStock entries into settings so IDs survive GAS sync
+  (DB.stockIn||[]).forEach(b=>{
+    if(b.isOpeningStock&&!DB.settings.openingStockIds.includes(b.id))
+      DB.settings.openingStockIds.push(b.id);
+  });
 
   deduplicateProducts();
 }
@@ -674,6 +680,10 @@ async function syncFromGAS(){
         const obj={...r};
         ['invoiceNumbers','paymentLogs','pageAccess','reportAccess'].forEach(f=>{
           if(typeof obj[f]==='string'&&obj[f].startsWith('['))try{obj[f]=JSON.parse(obj[f]);}catch(e){}
+        });
+        // Normalize boolean fields that come back from GAS as "TRUE"/"FALSE" strings
+        ['isOpeningStock'].forEach(f=>{
+          if(typeof obj[f]==='string') obj[f]=obj[f].toLowerCase()==='true'||obj[f]==='1';
         });
         // Normalize AP: GAS sheet uses 'description' column, app uses 'item'
         if(sheet==='AccountsPayable'){
@@ -5730,14 +5740,16 @@ function buildIncomeStatement(){
   const netSales=grossSales-totalSalesDeductions;
 
   // ── COGS ──
+  const openingStockIds=new Set(DB.settings.openingStockIds||[]);
+  function isOpeningStockEntry(b){return b.isOpeningStock||openingStockIds.has(b.id);}
   const stockInPeriod=(DB.stockIn||[]).filter(s=>inPeriod(s.date));
-  // Beginning Inventory: opening stock entries (isOpeningStock:true) within the period
+  // Beginning Inventory: opening stock entries within the period
   const beginningInventory=stockInPeriod
-    .filter(b=>b.isOpeningStock)
+    .filter(b=>isOpeningStockEntry(b))
     .reduce((s,b)=>s+(+b.totalCost||0),0);
   // Purchases during period (regular stock-in entries, excluding opening stock)
   const totalPurchases=stockInPeriod
-    .filter(b=>!b.isOpeningStock)
+    .filter(b=>!isOpeningStockEntry(b))
     .reduce((s,b)=>s+(+b.totalCost||0),0);
 
   // Ending Inventory: current remaining value of all stock on hand (at cost, FIFO)
@@ -6164,7 +6176,8 @@ function renderBeginInventory(el, actions){
   actions.innerHTML=`<button class="btn btn-primary" onclick="addBeginRow()">+ Add Row</button>
     <button class="btn btn-success" onclick="confirmBeginInventory()" style="margin-left:8px">💾 Save All</button>`;
 
-  const existing=(DB.stockIn||[]).filter(s=>s.isOpeningStock);
+  const _openingIds=new Set(DB.settings.openingStockIds||[]);
+  const existing=(DB.stockIn||[]).filter(s=>s.isOpeningStock||_openingIds.has(s.id));
 
   el.innerHTML=`
   ${existing.length?`
@@ -6314,6 +6327,9 @@ async function saveBeginInventory(){
     };
 
     DB.stockIn.push(entry);
+    // Track opening stock IDs in settings so they survive GAS sync (GAS may not preserve isOpeningStock column)
+    if(!DB.settings.openingStockIds) DB.settings.openingStockIds=[];
+    if(!DB.settings.openingStockIds.includes(entry.id)) DB.settings.openingStockIds.push(entry.id);
     saveDB();
     await gasPost({action:'add',sheet:'StockIn',data:entry});
     const convNote=hasKgConversion?` (${fmtN(totalKg)} kg total)`:'';
@@ -6330,6 +6346,7 @@ async function saveBeginInventory(){
 async function deleteBeginEntry(id){
   if(!confirm('Delete this opening stock entry? This will affect FIFO calculations.'))return;
   DB.stockIn=DB.stockIn.filter(x=>x.id!==id);
+  if(DB.settings.openingStockIds) DB.settings.openingStockIds=DB.settings.openingStockIds.filter(x=>x!==id);
   saveDB();
   await gasPost({action:'delete',sheet:'StockIn',data:{id}});
   showToast('Entry deleted','warning');
