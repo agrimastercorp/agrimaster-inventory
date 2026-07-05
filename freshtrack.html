@@ -587,6 +587,7 @@ function loadDB(){
   });
 
   deduplicateProducts();
+  removeGhostProducts();
 }
 
 // Merge products with the same name (case-insensitive), re-point all references to the first (canonical) ID
@@ -618,6 +619,20 @@ function deduplicateProducts(){
   DB.spoilage.forEach(r=>{if(idRemap.has(r.productId))r.productId=idRemap.get(r.productId);});
 
   saveDB();
+}
+
+// Remove products that have no stock-in, stock-out, or spoilage records (ghost products).
+// These cause false OUT alerts and should never accumulate in the system.
+function removeGhostProducts(){
+  if(!DB.products||DB.products.length===0)return;
+  const usedIds=new Set([
+    ...DB.stockIn.map(r=>r.productId),
+    ...DB.stockOut.map(r=>r.productId),
+    ...DB.spoilage.map(r=>r.productId),
+  ]);
+  const before=DB.products.length;
+  DB.products=DB.products.filter(p=>usedIds.has(p.id));
+  if(DB.products.length<before) saveDB();
 }
 
 function genId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
@@ -712,6 +727,7 @@ async function syncFromGAS(){
     });
     DB.products=[...seen.values()];
   }
+  removeGhostProducts();
   // Merge settings from GAS (users, shopName) but keep local gasUrl and apiKey
   if(data.Settings&&Array.isArray(data.Settings)&&data.Settings.length){
     const s=data.Settings[0];
