@@ -1240,9 +1240,11 @@ function renderDashboard(el){
   const todayRevenue=todaySales.reduce((s,x)=>s+(+x.totalRevenue||0),0);
   const todayCogs=todaySales.reduce((s,x)=>s+(+x.cogs||0),0);
   const todayProfit=todayRevenue-todayCogs;
-  // Group by name to avoid duplicate ghost products triggering false alerts
+  // Group by name; only include products that have at least one purchase entry
+  const productsWithPurchases=new Set(DB.stockIn.map(b=>b.productId));
   const stockByName=new Map();
   DB.products.forEach(p=>{
+    if(!productsWithPurchases.has(p.id))return; // skip ghost products with no purchases
     const key=p.name.toLowerCase().trim();
     const qty=getStockLevel(p.id);
     if(!stockByName.has(key)) stockByName.set(key,{name:p.name,qty:0,reorderLevel:+p.reorderLevel||5});
@@ -1309,7 +1311,8 @@ function renderDashboard(el){
                 if(r.ids.includes(b.productId)){r.value+=(+b.remainingQty||0)*(+b.costPerUnit||+b.costPerBulk||0);break;}
               }
             });
-            const rows=[...grouped.values()].sort((a,b)=>a.qty-b.qty);
+            // Exclude groups where none of the product IDs have any purchase entries
+            const rows=[...grouped.values()].filter(r=>r.ids.some(id=>productsWithPurchases.has(id))).sort((a,b)=>a.qty-b.qty);
             return rows.map(r=>{const low=r.qty<=r.reorderLevel;return`
             <tr><td>${r.name}</td><td class="fw-bold">${fmtN(r.qty)}</td><td style="${r.qty<=0?'color:var(--danger)':''}">${r.unit}</td>
             ${canSeeCosts()?`<td class="fw-bold">${fmt(r.value)}</td>`:''}
