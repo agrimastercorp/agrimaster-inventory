@@ -3262,7 +3262,9 @@ const FRUIT_COMMODITIES=['Citrus','Tropical','Stone Fruit','Berries','Melon','Ex
 const VEG_COMMODITIES=['Leafy Greens','Root Crops','Gourds & Squash','Legumes & Pods','Herbs & Spices','Alliums','Other Vegetables'];
 const FRUIT_PACKAGING=['Box','Crate','Sack','Bag','Tray','Basket','Net Bag'];
 const VEG_UOM=['kg','g','bundle','pcs','sack','box','tray','pack','liter'];
-const BULK_VEG_UNITS=['box','sack','crate','bag','tray','net bag'];
+const NON_BULK_VEG_UNITS=['kg','g','liter','l','pcs'];
+function isVegBulkUnit(u){return!NON_BULK_VEG_UNITS.includes((u||'').toLowerCase());}
+const BULK_VEG_UNITS={includes:u=>isVegBulkUnit(u)};
 
 function renderProducts(el,actions){
   const isOwner=SESSION.role==='owner';
