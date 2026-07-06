@@ -1351,7 +1351,7 @@ function renderStockIn(el,actions){
     <button class="btn btn-secondary" onclick="exportStockInCSV()">⬇️ Export CSV</button>
     <label class="btn btn-secondary" style="cursor:pointer;margin:0">⬆️ Import CSV<input type="file" accept=".csv" style="display:none" onchange="importStockInCSV(this)"></label>`;
 
-  const rows=DB.stockIn.slice().reverse();
+  const rows=DB.stockIn.slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
   const fruits=rows.filter(s=>{const p=DB.products.find(x=>x.id===s.productId);return p?.type==='fruit';});
   const vegs=rows.filter(s=>{const p=DB.products.find(x=>x.id===s.productId);return p?.type==='vegetable';});
   const all=rows;
@@ -2762,7 +2762,7 @@ function renderStockOut(el,actions){
     <button class="btn btn-secondary" onclick="guardReport('exportARSummary',exportARSummary)">📊 Export AR Summary</button>
     <button class="btn btn-primary" onclick="openStockOutForm()">+ Add Sale</button>`;
   try{
-  const rows=(DB.stockOut||[]).slice().reverse();
+  const rows=(DB.stockOut||[]).slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
 
   // Totals summary
   const totRevenue=rows.reduce((s,x)=>s+(+x.totalRevenue||0),0);
@@ -3153,7 +3153,7 @@ async function deleteStockOut(id){
 // ─────────────────────────────────────────────
 function renderSpoilage(el,actions){
   actions.innerHTML=`<button class="btn btn-primary" onclick="openSpoilageForm()">+ Add Spoilage</button>`;
-  const rows=DB.spoilage.slice().reverse();
+  const rows=DB.spoilage.slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
   el.innerHTML=`
   <div class="card">
     <div class="card-header"><span class="card-title">Spoilage / Rejects</span><span class="tag">${DB.spoilage.length} entries</span></div>
