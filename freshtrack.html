@@ -3085,13 +3085,23 @@ function openSpoilageForm(){
 }
 
 function prefillSpoilageUnit(sel){
-  const opt=sel.options[sel.selectedIndex];
-  const unit=(opt?.dataset?.unit||'').toLowerCase().trim();
+  const productId=sel.value;
   const unitSel=document.getElementById('sp-unit');
   if(!unitSel)return;
-  // Try to match existing option, otherwise default to first
-  const match=[...unitSel.options].find(o=>o.value===unit);
-  if(match) unitSel.value=unit;
+  // Determine available units from active stockIn batches
+  const batches=getActiveBatches(productId);
+  const bulkUnits=new Set();
+  batches.forEach(b=>{if(b.bulkUnit&&b.kgPerBulk&&+b.kgPerBulk>1)bulkUnits.add(b.bulkUnit.toLowerCase());});
+  // Always offer kg; add bulk unit (box/crate/sack etc.) if product was purchased in bulk
+  const allUom=['kg','g','box','crate','sack','bag','tray','bundle','pcs','liter','pack','net bag','other'];
+  const relevant=allUom.filter(u=>u==='kg'||bulkUnits.has(u)||bulkUnits.size===0);
+  unitSel.innerHTML=relevant.map(u=>{
+    const note=bulkUnits.has(u)?` (bulk unit)`:'';
+    return`<option value="${u}">${u}${note}</option>`;
+  }).join('');
+  // Default to bulk unit if it exists
+  const defaultUnit=[...bulkUnits][0]||'kg';
+  if([...unitSel.options].find(o=>o.value===defaultUnit))unitSel.value=defaultUnit;
 }
 
 async function saveSpoilage(){
@@ -3100,10 +3110,15 @@ async function saveSpoilage(){
   const reason=document.getElementById('sp-reason').value;
   const unit=document.getElementById('sp-unit')?.value||DB.products.find(p=>p.id===productId)?.unit||'';
   if(!productId||!qty){showToast('Fill in required fields','error');return;}
+  // Convert bulk unit (box/crate/sack) → kg for FIFO deduction
+  const batches=getActiveBatches(productId);
+  const matchBatch=batches.find(b=>b.bulkUnit?.toLowerCase()===unit.toLowerCase()&&+b.kgPerBulk>1);
+  const kgPerBulk=matchBatch?+matchBatch.kgPerBulk:1;
+  const qtyInKg=qty*kgPerBulk;
   const stock=getStockLevel(productId);
-  if(qty>stock){showToast(`Not enough stock. Available: ${fmtN(stock)}`,'error');return;}
-  const {cogs:loss}=calculateFifoCogs(productId,qty);
-  const affected=applyFifoDeduction(productId,qty);
+  if(qtyInKg>stock){showToast(`Not enough stock. Available: ${fmtN(stock)} kg (${fmtN(stock/kgPerBulk)} ${unit})`,'error');return;}
+  const {cogs:loss}=calculateFifoCogs(productId,qtyInKg);
+  const affected=applyFifoDeduction(productId,qtyInKg);
   const entry={id:genId(),date:document.getElementById('sp-date').value,productId,qty,unit,reason,loss,staffUser:SESSION.username};
   DB.spoilage.push(entry);
   saveDB();
