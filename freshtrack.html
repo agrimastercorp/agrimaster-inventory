@@ -1526,8 +1526,8 @@ function openStockInForm(type='vegetable'){
       </div>
       <input type="hidden" id="si-sell-mode" value="kg">
 
-      <!-- Row: Packaging + No. of Packages + Cost per Package (shared) -->
-      <div class="form-grid form-grid-3" style="margin-bottom:10px">
+      <!-- Row 1: Packaging + No. of Packages + kg per Package + Cost per Package -->
+      <div class="form-grid form-grid-2" style="margin-bottom:10px">
         <div class="form-group">
           <label>Packaging *</label>
           <select id="si-packaging" oninput="siFruitRecalc()">${packagingOpts}</select>
@@ -1536,25 +1536,29 @@ function openStockInForm(type='vegetable'){
           <label>No. of Packages *</label>
           <input type="number" id="si-num-pkg" min="0.01" step="0.01" placeholder="e.g. 2" oninput="siFruitRecalc()">
         </div>
-        ${canSeeCosts()?`<div class="form-group">
-          <label>Cost per Package (₱) *</label>
-          <input type="number" id="si-cost-pkg" min="0" step="0.01" placeholder="e.g. 2500" oninput="siFruitRecalc()">
-        </div>`:`<input type="hidden" id="si-cost-pkg" value="0">`}
       </div>
 
       <!-- PER KG fields -->
-      <div id="si-kg-fields" class="form-grid form-grid-3" style="margin-bottom:10px">
-        <div class="form-group">
-          <label>kg per Package *</label>
-          <input type="number" id="si-kg-pkg" min="0.01" step="0.01" placeholder="e.g. 19" oninput="siFruitRecalc()">
+      <div id="si-kg-fields" style="margin-bottom:10px">
+        <div class="form-grid form-grid-3" style="margin-bottom:10px">
+          <div class="form-group">
+            <label>kg per Package *</label>
+            <input type="number" id="si-kg-pkg" min="0.01" step="0.01" placeholder="e.g. 19" oninput="siFruitRecalc()">
+          </div>
+          ${canSeeCosts()?`<div class="form-group">
+            <label>Cost per Package (₱) *</label>
+            <input type="number" id="si-cost-pkg" min="0" step="0.01" placeholder="e.g. 2500" oninput="siFruitRecalc()">
+          </div>`:`<input type="hidden" id="si-cost-pkg" value="0">`}
+          <div class="form-group">
+            <label>Total kg</label>
+            <input id="si-total-kg" readonly style="background:var(--gray-light);font-weight:700" placeholder="Auto">
+          </div>
         </div>
-        <div class="form-group">
-          <label>Total kg</label>
-          <input id="si-total-kg" readonly style="background:var(--gray-light);font-weight:700" placeholder="Auto">
-        </div>
-        <div class="form-group">
-          <label>Cost per kg</label>
-          <input id="si-cost-kg" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" placeholder="Auto">
+        <div class="form-grid form-grid-2" style="margin-bottom:4px">
+          <div class="form-group">
+            <label>Cost per kg</label>
+            <input id="si-cost-kg" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" placeholder="Auto">
+          </div>
         </div>
       </div>
 
