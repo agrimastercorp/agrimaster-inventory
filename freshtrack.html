@@ -591,15 +591,18 @@ function loadDB(){
   fixBulkVegRemainingQty();
 }
 
-// Migration: fix bulk veg entries where remainingQty was stored as box count instead of total kg.
-// Pattern: type=vegetable, kgPerBulk>1, remainingQty===bulkQty (box count), qty (total kg) > remainingQty.
+// Migration: fix bulk veg entries where remainingQty was stored in box/sack/etc units instead of kg.
+// Detects the pattern: remainingQty × kgPerBulk ≈ qty (i.e. remaining is in bulk units, not kg).
+// Only fixes if nothing has been sold yet (remainingQty × kgPerBulk ≈ qty, not partial).
 function fixBulkVegRemainingQty(){
   let fixed=0;
   (DB.stockIn||[]).forEach(b=>{
-    if(b.type==='vegetable'&&+b.kgPerBulk>1&&+b.bulkQty>0
-      &&Math.abs(+b.remainingQty-+b.bulkQty)<0.001
-      &&+b.qty>+b.bulkQty){
-      b.remainingQty=+b.qty;
+    const kgPer=+b.kgPerBulk||1;
+    const qty=+b.qty||0;
+    const rem=+b.remainingQty||0;
+    if(b.type==='vegetable'&&kgPer>1&&qty>0&&rem>0&&rem<qty
+      &&Math.abs(rem*kgPer-qty)<0.01){
+      b.remainingQty=qty;
       fixed++;
     }
   });
