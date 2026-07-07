@@ -2043,9 +2043,13 @@ function openStockInEdit(id){
       </div>`:'<input type="hidden" id="sie-totalcost" value="${s.totalCost||0}">'}
       `}
 
+      <!-- Hidden originals for auto-adjusting remaining qty -->
+      <input type="hidden" id="sie-orig-qty" value="${+(s.qty||0)}">
+      <input type="hidden" id="sie-orig-remaining" value="${+(s.remainingQty??s.qty??0)}">
+
       <!-- Remaining Qty (owner can correct if data was corrupted) -->
       <div class="form-group" style="margin-top:10px">
-        <label>Remaining Qty <span style="font-size:11px;color:#6b7280">(correct this if stock shows wrong after edit)</span></label>
+        <label>Remaining Qty <span style="font-size:11px;color:#6b7280">(auto-updated when kg changes — correct if wrong)</span></label>
         <input type="number" id="sie-remainingqty" value="${+(+(s.remainingQty??s.qty??0)).toFixed(2)}" min="0" step="0.01" style="width:100%">
       </div>
 
@@ -2130,6 +2134,15 @@ function sieRecalc(){
       let tcEl=document.getElementById('sie-totalcost');
       if(!tcEl){tcEl=document.createElement('input');tcEl.type='hidden';tcEl.id='sie-totalcost';document.querySelector('.modal-body')?.appendChild(tcEl);}
       tcEl.value=totalCost;
+      // Auto-update remaining qty: preserve sold qty, apply to new total kg
+      if(totalKg>0){
+        const origQty=+document.getElementById('sie-orig-qty')?.value||0;
+        const origRemaining=+document.getElementById('sie-orig-remaining')?.value||0;
+        const soldQty=Math.max(0,origQty-origRemaining);
+        const autoRemaining=Math.max(0,totalKg-soldQty);
+        const remEl=document.getElementById('sie-remainingqty');
+        if(remEl) remEl.value=autoRemaining.toFixed(2);
+      }
     } else {
       if(bulkFieldsEl) bulkFieldsEl.style.display='none';
       if(qtyLabelEl) qtyLabelEl.textContent='Quantity *';
