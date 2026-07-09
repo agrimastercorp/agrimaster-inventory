@@ -747,12 +747,9 @@ async function syncFromGAS(){
     });
     DB.products=[...seen.values()];
   }
-  // Restore isOpeningStock flag from openingStockIds (GAS sheet does not have this column)
-  const _openingSet=new Set(DB.settings.openingStockIds||[]);
-  (DB.stockIn||[]).forEach(b=>{if(_openingSet.has(b.id))b.isOpeningStock=true;});
   removeGhostProducts();
   fixBulkVegRemainingQty();
-  // Merge settings from GAS (users, shopName) but keep local gasUrl and apiKey
+  // Merge settings from GAS (users, shopName, openingStockIds) but keep local gasUrl and apiKey
   if(data.Settings&&Array.isArray(data.Settings)&&data.Settings.length){
     const s=data.Settings[0];
     const gasUrl=DB.settings.gasUrl;
@@ -775,9 +772,22 @@ async function syncFromGAS(){
         }
       }catch(e){}
     }
+    // Merge openingStockIds from GAS settings so they survive across devices/browsers
+    if(s.openingStockIds){
+      try{
+        const gasIds=typeof s.openingStockIds==='string'?JSON.parse(s.openingStockIds):(Array.isArray(s.openingStockIds)?s.openingStockIds:[]);
+        if(Array.isArray(gasIds)&&gasIds.length){
+          if(!DB.settings.openingStockIds)DB.settings.openingStockIds=[];
+          gasIds.forEach(id=>{if(id&&!DB.settings.openingStockIds.includes(id))DB.settings.openingStockIds.push(id);});
+        }
+      }catch(e){}
+    }
     DB.settings.gasUrl=gasUrl;   // never overwrite local gasUrl
     DB.settings.apiKey=apiKey;   // never overwrite local apiKey
   }
+  // Restore isOpeningStock flag AFTER settings merge so GAS-sourced openingStockIds are also applied
+  const _openingSet=new Set(DB.settings.openingStockIds||[]);
+  (DB.stockIn||[]).forEach(b=>{if(_openingSet.has(b.id))b.isOpeningStock=true;});
   saveDB();
   return true;
 }
@@ -6573,12 +6583,17 @@ async function saveBeginInventory(){
   }
 
   if(saved>0){
+    // Persist openingStockIds to GAS settings so they survive across devices/browsers
+    try{
+      const users=getUsers();
+      await gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users,openingStockIds:JSON.stringify(DB.settings.openingStockIds||[])}});
+    }catch(e){}
     showToast(`${saved} opening stock entr${saved===1?'y':'ies'} saved ✓`,'success');
     renderPage('begininventory');
   }
 }
 
-function recoverOpeningStockSelected(){
+async function recoverOpeningStockSelected(){
   const checked=[...document.querySelectorAll('.bi-recover-cb:checked')].map(c=>c.value);
   if(!checked.length){showToast('Please tick at least one entry','error');return;}
   if(!DB.settings.openingStockIds)DB.settings.openingStockIds=[];
@@ -6591,6 +6606,11 @@ function recoverOpeningStockSelected(){
     }
   });
   saveDB();
+  // Persist openingStockIds to GAS settings so they survive across devices/browsers
+  try{
+    const users=getUsers();
+    await gasPost({action:'saveSettings',sheet:'Settings',data:{shopName:DB.settings.shopName||'Agrimaster Corporation',users,openingStockIds:JSON.stringify(DB.settings.openingStockIds||[])}});
+  }catch(e){}
   showToast(`${count} entr${count===1?'y':'ies'} registered as Opening Stock ✓`,'success');
   renderPage('begininventory');
 }
