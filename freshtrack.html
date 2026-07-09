@@ -580,10 +580,11 @@ function loadDB(){
   if(!DB.loans)DB.loans=[];
   if(!DB.purchaseOrders)DB.purchaseOrders=[];
   if(!DB.settings.openingStockIds)DB.settings.openingStockIds=[];
-  // Backfill: register any isOpeningStock entries into settings so IDs survive GAS sync
+  // Backfill both directions so isOpeningStock and openingStockIds stay in sync
+  const _oidSet=new Set(DB.settings.openingStockIds||[]);
   (DB.stockIn||[]).forEach(b=>{
-    if(b.isOpeningStock&&!DB.settings.openingStockIds.includes(b.id))
-      DB.settings.openingStockIds.push(b.id);
+    if(b.isOpeningStock&&!_oidSet.has(b.id)){DB.settings.openingStockIds.push(b.id);_oidSet.add(b.id);}
+    if(_oidSet.has(b.id))b.isOpeningStock=true;
   });
 
   deduplicateProducts();
@@ -746,6 +747,9 @@ async function syncFromGAS(){
     });
     DB.products=[...seen.values()];
   }
+  // Restore isOpeningStock flag from openingStockIds (GAS sheet does not have this column)
+  const _openingSet=new Set(DB.settings.openingStockIds||[]);
+  (DB.stockIn||[]).forEach(b=>{if(_openingSet.has(b.id))b.isOpeningStock=true;});
   removeGhostProducts();
   fixBulkVegRemainingQty();
   // Merge settings from GAS (users, shopName) but keep local gasUrl and apiKey
