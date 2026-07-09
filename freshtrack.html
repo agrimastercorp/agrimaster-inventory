@@ -5941,11 +5941,12 @@ function buildIncomeStatement(){
   const openingStockIds=new Set(DB.settings.openingStockIds||[]);
   function isOpeningStockEntry(b){return b.isOpeningStock||openingStockIds.has(b.id);}
   const stockInPeriod=(DB.stockIn||[]).filter(s=>inPeriod(s.date));
-  // Beginning Inventory: opening stock entries within the period
-  const beginningInventory=stockInPeriod
+  // Beginning Inventory: ALL opening stock entries regardless of date
+  // (they represent stock on hand before the period started, so they must not be date-filtered)
+  const beginningInventory=(DB.stockIn||[])
     .filter(b=>isOpeningStockEntry(b))
     .reduce((s,b)=>s+(+b.totalCost||0),0);
-  // Purchases during period (regular stock-in entries, excluding opening stock)
+  // Purchases during period (regular stock-in entries within the period, excluding opening stock)
   const totalPurchases=stockInPeriod
     .filter(b=>!isOpeningStockEntry(b))
     .reduce((s,b)=>s+(+b.totalCost||0),0);
