@@ -2809,7 +2809,11 @@ function renderStockOut(el,actions){
     <button class="btn btn-secondary" onclick="guardReport('exportARSummary',exportARSummary)">📊 Export AR Summary</button>
     <button class="btn btn-primary" onclick="openStockOutForm()">+ Add Sale</button>`;
   try{
-  const rows=(DB.stockOut||[]).slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rows=(DB.stockOut||[]).slice().sort((a,b)=>{
+    const dateDiff=new Date(b.date)-new Date(a.date);
+    if(dateDiff!==0)return dateDiff;
+    return(+b.invoiceNumber||0)-(+a.invoiceNumber||0);
+  });
 
   // Totals summary
   const totRevenue=rows.reduce((s,x)=>s+(+x.totalRevenue||0),0);
