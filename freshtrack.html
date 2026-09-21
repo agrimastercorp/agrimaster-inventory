@@ -659,6 +659,8 @@ function genId(){return Date.now().toString(36)+Math.random().toString(36).slice
 
 // ── GAS sync ──
 let GAS_STATUS = 'idle'; // idle | ok | err
+let SYNC_PAUSED = false; // true while clearAllData runs so background sync can't restore rows
+let SYNC_GEN = 0;        // bumped by clearAllData; discards any sync already in flight
 const BAKED_GAS_URL = 'https://script.google.com/macros/s/AKfycby18nUXX3KGhjhHYWRag-XY9PaMQZ3Cs6ErreUn2u_ErCU-OF8eV7gWb8TDAOe3HSGu/exec';
 const BAKED_API_KEY = 'Agrimasterkey2023';
 
@@ -692,9 +694,24 @@ async function gasPost(payload){
   }catch(e){GAS_STATUS='err';return false;}
 }
 
+function reconcileCustomerBalances(){
+  if(!Array.isArray(DB.customers))return;
+  DB.customers.forEach(c=>{
+    const creditSales=(DB.stockOut||[])
+      .filter(s=>s.customerId===c.id&&s.paymentType==='credit')
+      .reduce((sum,s)=>sum+(+s.accountsReceivable||0),0);
+    const totalPaid=(DB.payments||[])
+      .filter(p=>p.customerId===c.id)
+      .reduce((sum,p)=>sum+(+p.amount||0),0);
+    c.balance=Math.max(0,creditSales-totalPaid);
+  });
+}
+
 async function syncFromGAS(){
+  if(SYNC_PAUSED)return false;
+  const gen=SYNC_GEN;
   const data=await gasGet();
-  if(!data)return false;
+  if(!data||gen!==SYNC_GEN)return false;
   const maps={
     Products:'products',StockIn:'stockIn',StockOut:'stockOut',
     Spoilage:'spoilage',Expenses:'expenses',Suppliers:'suppliers',
@@ -788,6 +805,8 @@ async function syncFromGAS(){
   // Restore isOpeningStock flag AFTER settings merge so GAS-sourced openingStockIds are also applied
   const _openingSet=new Set(DB.settings.openingStockIds||[]);
   (DB.stockIn||[]).forEach(b=>{if(_openingSet.has(b.id))b.isOpeningStock=true;});
+  // Reconcile customer balances from actual credit sales minus payments
+  reconcileCustomerBalances();
   saveDB();
   return true;
 }
@@ -1058,30 +1077,26 @@ function showSaveConfirm(title, rows){
 // ── PER-TRANSACTION CONFIRM WRAPPERS ──────────────────────────
 function confirmStockIn(type){
   _lockModalSaveBtn();
-  const product=document.getElementById('si-product')?.value?.trim()||'—';
+  const rows=[...document.querySelectorAll('.si-item-row')];
+  const itemCount=rows.length;
   const supplier=document.getElementById('si-supplier')?.options[document.getElementById('si-supplier')?.selectedIndex]?.text||'—';
   const pm=document.querySelector('input[name="si-payment-method"]:checked')?.value||'cash';
   const date=document.getElementById('si-date')?.value||'—';
-  // Try to get total cost from summary text
-  const summary=document.getElementById('si-summary-text')?.textContent||'';
-  const totalMatch=summary.match(/Total[^₱]*₱([0-9,\.]+)/i);
-  const total=totalMatch?'₱ '+totalMatch[1]:'(see form)';
   _pendingSaveFn=()=>saveStockIn(type);
-  showSaveConfirm('Purchase (Stock In)',[ ['Product',product],['Supplier',supplier],['Date',date],['Payment',pm.toUpperCase()],['Total Cost',total] ]);
+  showSaveConfirm('Purchase (Stock In)',[ ['Items',`${itemCount} item${itemCount!==1?'s':''}`],['Supplier',supplier],['Date',date],['Payment',pm.toUpperCase()] ]);
 }
 
 function confirmStockOut(){
   _lockModalSaveBtn();
-  const sel=document.getElementById('so-product');
-  const product=sel?.options[sel?.selectedIndex]?.text||'—';
+  const rows=[...document.querySelectorAll('.so-item-row')];
+  const itemCount=rows.length;
   const custSel=document.getElementById('so-customer');
   const customer=custSel?.options[custSel?.selectedIndex]?.text||'Walk-in';
-  const qty=document.getElementById('so-qty')?.value||'—';
   const revenue=document.getElementById('so-revenue')?.value||'—';
   const payment=document.getElementById('so-payment')?.value||'—';
   const date=document.getElementById('so-date')?.value||'—';
   _pendingSaveFn=()=>saveStockOut();
-  showSaveConfirm('Sale (Stock Out)',[ ['Product',product],['Customer',customer],['Qty',qty],['Total Revenue','₱ '+revenue],['Payment',payment.toUpperCase()],['Date',date] ]);
+  showSaveConfirm('Sale (Stock Out)',[ ['Items',`${itemCount} item${itemCount!==1?'s':''}`],['Customer',customer],['Total Revenue',revenue],['Payment',payment.toUpperCase()],['Date',date] ]);
 }
 
 function confirmSpoilage(){
@@ -1385,7 +1400,11 @@ function renderStockIn(el,actions){
     <button class="btn btn-secondary" onclick="exportStockInCSV()">⬇️ Export CSV</button>
     <label class="btn btn-secondary" style="cursor:pointer;margin:0">⬆️ Import CSV<input type="file" accept=".csv" style="display:none" onchange="importStockInCSV(this)"></label>`;
 
-  const rows=DB.stockIn.slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rows=DB.stockIn.slice().sort((a,b)=>{
+    const da=a.date?new Date(a.date).getTime():0;
+    const db=b.date?new Date(b.date).getTime():0;
+    return db-da;
+  });
   const fruits=rows.filter(s=>{const p=DB.products.find(x=>x.id===s.productId);return p?.type==='fruit';});
   const vegs=rows.filter(s=>{const p=DB.products.find(x=>x.id===s.productId);return p?.type==='vegetable';});
   const all=rows;
@@ -1531,125 +1550,17 @@ function openStockInForm(type='vegetable'){
         ⚠️ <strong>Credit</strong> — This purchase will automatically be added to <strong>Accounts Payable</strong> as unpaid.
       </div>
 
-      <!-- Row 2: Product (full width for both fruit and veg) -->
-      <div class="form-grid" style="margin-bottom:12px">
-        <div class="form-group">
-          <label>Product *</label>
-          <input type="text" id="si-product"
-            placeholder="Type product name…"
-            autocomplete="off"
-            style="width:100%">
-          <span class="form-note">Type any name — new products are added automatically</span>
-        </div>
-      </div>
-
+      <!-- Items -->
       <hr class="divider">
-
-      ${isFruit ? `
-      <!-- FRUIT: Sell Mode Toggle -->
-      <div style="font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">📦 How do you sell this?</div>
-      <div style="display:flex;gap:8px;margin-bottom:14px">
-        <button type="button" id="si-mode-kg" onclick="siSetMode('kg')"
-          class="btn btn-warning" style="flex:1;justify-content:center;color:#fff">
-          ⚖️ Per kg
-        </button>
-        <button type="button" id="si-mode-pack" onclick="siSetMode('pack')"
-          class="btn btn-secondary" style="flex:1;justify-content:center">
-          📦 Per pack / piece
-        </button>
+      <div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;font-weight:700;color:${headerColor};text-transform:uppercase;letter-spacing:.5px">${headerIcon} Items</span>
+        <button type="button" class="btn btn-secondary" style="padding:4px 14px;font-size:12px" onclick="siAddItemRow('${type}')">+ Add Item</button>
       </div>
-      <input type="hidden" id="si-sell-mode" value="kg">
-
-      <!-- Row 1: Packaging + No. of Packages + kg per Package + Cost per Package -->
-      <div class="form-grid form-grid-2" style="margin-bottom:10px">
-        <div class="form-group">
-          <label>Packaging *</label>
-          <select id="si-packaging" oninput="siFruitRecalc()">${packagingOpts}</select>
-        </div>
-        <div class="form-group">
-          <label>No. of Packages *</label>
-          <input type="number" id="si-num-pkg" min="0.01" step="0.01" placeholder="e.g. 2" oninput="siFruitRecalc()">
-        </div>
+      <div id="si-items-list"></div>
+      <div id="si-grand-total" style="display:none;justify-content:flex-end;align-items:center;gap:10px;padding:8px 4px;margin-top:4px">
+        <span style="font-size:13px;font-weight:600;color:var(--text-muted,#6b7280)">Grand Total</span>
+        <span id="si-grand-total-val" style="font-size:16px;font-weight:700;color:var(--green-dark,#15803d);background:var(--green-light,#dcfce7);padding:4px 14px;border-radius:8px"></span>
       </div>
-
-      <!-- PER KG fields -->
-      <div id="si-kg-fields" style="margin-bottom:10px">
-        <div class="form-grid form-grid-3" style="margin-bottom:10px">
-          <div class="form-group">
-            <label>kg per Package *</label>
-            <input type="number" id="si-kg-pkg" min="0.01" step="0.01" placeholder="e.g. 19" oninput="siFruitRecalc()">
-          </div>
-          ${canSeeCosts()?`<div class="form-group">
-            <label>Cost per Package (₱) *</label>
-            <input type="number" id="si-cost-pkg" min="0" step="0.01" placeholder="e.g. 2500" oninput="siFruitRecalc()">
-          </div>`:`<input type="hidden" id="si-cost-pkg" value="0">`}
-          <div class="form-group">
-            <label>Total kg</label>
-            <input id="si-total-kg" readonly style="background:var(--gray-light);font-weight:700" placeholder="Auto">
-          </div>
-        </div>
-        <div class="form-grid form-grid-2" style="margin-bottom:4px">
-          <div class="form-group">
-            <label>Cost per kg</label>
-            <input id="si-cost-kg" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" placeholder="Auto">
-          </div>
-        </div>
-      </div>
-
-      <!-- PER PACK fields -->
-      <div id="si-pack-fields" class="form-grid form-grid-3" style="display:none;margin-bottom:10px">
-        <div class="form-group">
-          <label>Packs per Package *</label>
-          <input type="number" id="si-packs-per-pkg" min="1" step="1" placeholder="e.g. 12" oninput="siFruitRecalc()">
-        </div>
-        <div class="form-group">
-          <label>Pack size (g) — optional</label>
-          <input type="number" id="si-pack-size-g" min="1" step="1" placeholder="e.g. 125" oninput="siFruitRecalc()">
-        </div>
-        <div class="form-group">
-          <label>Cost per pack</label>
-          <input id="si-cost-per-pack" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" placeholder="Auto">
-        </div>
-      </div>
-      ` : `
-      <!-- VEGETABLE: UOM + Qty + Cost -->
-      <div style="font-size:12px;font-weight:700;color:var(--green-dark);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">⚖️ Vegetable Quantity & Cost</div>
-      <div class="form-grid form-grid-3" style="margin-bottom:10px">
-        <div class="form-group">
-          <label>Unit of Measure *</label>
-          <select id="si-uom" onchange="siVegRecalc()">${uomOpts}</select>
-        </div>
-        <div class="form-group">
-          <label id="si-qty-label">Quantity *</label>
-          <input type="number" id="si-veg-qty" min="0.01" step="0.01" placeholder="e.g. 50" oninput="siVegRecalc()">
-        </div>
-        <div class="form-group">
-          <label id="si-cost-label">Cost per kg (₱) *</label>
-          <input type="number" id="si-veg-cost-kg" min="0" step="0.01" placeholder="e.g. 45" oninput="siVegRecalc()">
-        </div>
-      </div>
-      <!-- Bulk conversion fields (shown when UOM is box/sack/etc) -->
-      <div id="si-veg-bulk-fields" class="form-grid form-grid-3" style="display:none;margin-bottom:10px">
-        <div class="form-group">
-          <label id="si-kgper-label">kg per box *</label>
-          <input type="number" id="si-veg-kgper" min="0.01" step="0.01" placeholder="e.g. 10" oninput="siVegRecalc()">
-        </div>
-        <div class="form-group">
-          <label>Total kg</label>
-          <input id="si-veg-total-kg" readonly style="background:var(--gray-light);font-weight:700" placeholder="Auto">
-        </div>
-        <div class="form-group">
-          <label>Cost per kg</label>
-          <input id="si-veg-cost-per-kg" readonly style="background:var(--green-light);font-weight:700;color:var(--green-dark)" placeholder="Auto">
-        </div>
-      </div>
-      `}
-
-      <!-- Summary preview -->
-      <div id="si-summary" class="alert alert-success" style="display:none">
-        <div id="si-summary-text"></div>
-      </div>
-
 
     </div>
     <div class="modal-footer">
@@ -1658,9 +1569,11 @@ function openStockInForm(type='vegetable'){
     </div>
   </div>`);
 
-  // Store for commodity filter
+  // Init items list
   window._siProducts=products;
   window._siBuildProductSuggestions=buildProductSuggestions;
+  window._siRowIdx=0;
+  siAddItemRow(type);
 }
 
 function siFilterProducts(){
@@ -1778,138 +1691,411 @@ function siVegRecalc(){
   }
 }
 
+// ── MULTI-ITEM ROW HELPERS ──
+function siAddItemRow(type){
+  const container=document.getElementById('si-items-list');
+  if(!container)return;
+  const idx=window._siRowIdx=(window._siRowIdx||0)+1;
+  const isFruit=type==='fruit';
+  const packagingOpts=(window.FRUIT_PACKAGING||FRUIT_PACKAGING).map(p=>`<option>${p}</option>`).join('');
+  const uomOpts=(window.VEG_UOM||VEG_UOM).map(u=>`<option ${u==='kg'?'selected':''}>${u}</option>`).join('');
+  const canCost=canSeeCosts();
+  const row=document.createElement('div');
+  row.className='si-item-row';
+  row.dataset.idx=idx;
+  row.style.cssText='border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--surface,#fff)';
+  if(isFruit){
+    row.innerHTML=`
+      <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
+        <div style="flex:2;min-width:130px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Product *</label>
+          <input type="text" class="si-row-product" data-idx="${idx}" placeholder="Type product name…" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" onblur="siCheckSimilarProduct(${idx},'fruit')">
+        </div>
+        <div style="flex:1;min-width:90px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Packaging *</label>
+          <select class="si-row-packaging" data-idx="${idx}" style="width:100%;padding:7px 8px;border:1px solid var(--border);border-radius:6px" oninput="siFruitRowRecalc(${idx})">${packagingOpts}</select>
+        </div>
+        <div style="flex:1;min-width:75px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px"># Pkgs *</label>
+          <input type="number" class="si-row-num-pkg" data-idx="${idx}" min="0.01" step="0.01" placeholder="2" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="siFruitRowRecalc(${idx})">
+        </div>
+        <div style="flex:1;min-width:75px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">kg/pkg *</label>
+          <input type="number" class="si-row-kg-pkg" data-idx="${idx}" min="0.01" step="0.01" placeholder="19" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="siFruitRowRecalc(${idx})">
+        </div>
+        ${canCost?`<div style="flex:1;min-width:90px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Cost/pkg (₱) *</label>
+          <input type="number" class="si-row-cost-pkg" data-idx="${idx}" min="0" step="0.01" placeholder="2500" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="siFruitRowRecalc(${idx})">
+        </div>`:`<input type="hidden" class="si-row-cost-pkg" data-idx="${idx}" value="0">`}
+        <div style="flex:1;min-width:70px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Total kg</label>
+          <input class="si-row-total-kg" data-idx="${idx}" readonly style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--gray-light,#f3f4f6);font-weight:700" placeholder="Auto">
+        </div>
+        ${canCost?`<div style="flex:1;min-width:90px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Total Cost</label>
+          <input class="si-row-total-cost" data-idx="${idx}" readonly style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--green-light,#dcfce7);font-weight:700;color:var(--green-dark,#15803d)" placeholder="Auto">
+        </div>`:''}
+        <div>
+          <button type="button" onclick="siRemoveItemRow(${idx})" style="background:#fee2e2;border:none;border-radius:6px;padding:8px 10px;cursor:pointer;color:#dc2626;font-size:14px;line-height:1">🗑</button>
+        </div>
+      </div>`;
+  }else{
+    row.innerHTML=`
+      <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
+        <div style="flex:2;min-width:130px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Product *</label>
+          <input type="text" class="si-row-product" data-idx="${idx}" placeholder="Type product name…" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" onblur="siCheckSimilarProduct(${idx},'vegetable')">
+        </div>
+        <div style="flex:1;min-width:75px">
+          <label class="si-row-uom-label-${idx}" style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">UOM *</label>
+          <select class="si-row-uom" data-idx="${idx}" style="width:100%;padding:7px 8px;border:1px solid var(--border);border-radius:6px" onchange="siVegRowRecalc(${idx})">${uomOpts}</select>
+        </div>
+        <div style="flex:1;min-width:75px">
+          <label class="si-row-qty-label-${idx}" style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Qty *</label>
+          <input type="number" class="si-row-qty" data-idx="${idx}" min="0.01" step="0.01" placeholder="50" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="siVegRowRecalc(${idx})">
+        </div>
+        <div style="flex:1;min-width:90px">
+          <label class="si-row-cost-label-${idx}" style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Cost/kg (₱) *</label>
+          <input type="number" class="si-row-cost" data-idx="${idx}" min="0" step="0.01" placeholder="45" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="siVegRowRecalc(${idx})">
+        </div>
+        <div class="si-row-bulk-wrap-${idx}" style="display:none;flex:1;min-width:75px">
+          <label class="si-row-kgper-label-${idx}" style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">kg/box *</label>
+          <input type="number" class="si-row-kgper" data-idx="${idx}" min="0.01" step="0.01" placeholder="10" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="siVegRowRecalc(${idx})">
+        </div>
+        <div class="si-row-bulk-wrap-${idx}" style="display:none;flex:1;min-width:70px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Total kg</label>
+          <input class="si-row-total-kg" data-idx="${idx}" readonly style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--gray-light,#f3f4f6);font-weight:700" placeholder="Auto">
+        </div>
+        <div style="flex:1;min-width:90px">
+          <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Total Cost</label>
+          <input class="si-row-total-cost" data-idx="${idx}" readonly style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--green-light,#dcfce7);font-weight:700;color:var(--green-dark,#15803d)" placeholder="Auto">
+        </div>
+        <div>
+          <button type="button" onclick="siRemoveItemRow(${idx})" style="background:#fee2e2;border:none;border-radius:6px;padding:8px 10px;cursor:pointer;color:#dc2626;font-size:14px;line-height:1">🗑</button>
+        </div>
+      </div>`;
+  }
+  container.appendChild(row);
+}
+
+function _siLevenshtein(a,b){
+  const m=a.length,n=b.length;
+  const dp=Array.from({length:m+1},(_,i)=>Array.from({length:n+1},(_,j)=>i===0?j:j===0?i:0));
+  for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)
+    dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+function siCheckSimilarProduct(idx, type){
+  const row=document.querySelector(`.si-item-row[data-idx="${idx}"]`);
+  if(!row)return;
+  const input=row.querySelector('.si-row-product');
+  const typed=(input?.value||'').trim();
+  if(!typed||typed.length<2)return;
+  const norm=s=>s.toLowerCase().trim().replace(/\s+/g,' ');
+  const t=norm(typed);
+  const products=DB.products.filter(p=>p.type===type||!type);
+  // Exact match → no prompt
+  if(products.find(p=>norm(p.name)===t))return;
+  // Find best similar match
+  let best=null,bestScore=Infinity;
+  for(const p of products){
+    const pn=norm(p.name);
+    // Substring match
+    if(pn.includes(t)||t.includes(pn)){if(bestScore>0){best=p;bestScore=0;}continue;}
+    // Word overlap ≥50%
+    const tW=t.split(' '),pW=pn.split(' ');
+    const overlap=tW.filter(w=>pW.some(pw=>pw===w||pw.startsWith(w)||w.startsWith(pw))).length;
+    if(overlap>0&&overlap/Math.max(tW.length,pW.length)>=0.5){if(bestScore>1){best=p;bestScore=1;}continue;}
+    // Levenshtein distance on full string or each word pair
+    const maxLen=Math.max(t.length,pn.length);
+    const dist=_siLevenshtein(t,pn);
+    const threshold=Math.max(1,Math.floor(maxLen*0.3));
+    if(dist<=threshold&&dist<bestScore){best=p;bestScore=dist;}
+    // Also check word-level Levenshtein (catches "onon" vs "onion" in multi-word names)
+    for(const tw of tW)for(const pw of pW){
+      const wd=_siLevenshtein(tw,pw);
+      const wMax=Math.max(tw.length,pw.length);
+      if(wd<=Math.max(1,Math.floor(wMax*0.35))&&wd<bestScore){best=p;bestScore=wd;}
+    }
+  }
+  if(best){
+    // Show inline suggestion banner — avoids blocking the Save button click
+    const existingBanner=row.querySelector('.si-similar-banner');
+    if(existingBanner)existingBanner.remove();
+    const banner=document.createElement('div');
+    banner.className='si-similar-banner';
+    banner.style.cssText='margin-top:8px;padding:8px 12px;background:#fff7ed;border:1px solid #f59e0b;border-radius:6px;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+    banner.innerHTML=`<span style="flex:1">⚠️ Did you mean <strong>${best.name}</strong>?</span>`+
+      `<button type="button" onclick="this.closest('.si-similar-banner').previousSibling;document.querySelector('.si-row-product[data-idx=\\'${idx}\\']').value='${best.name.replace(/'/g,"\\'")}';this.closest('.si-similar-banner').remove();" `+
+      `style="padding:3px 10px;border-radius:5px;border:none;background:#f59e0b;color:#fff;font-weight:700;cursor:pointer;font-size:12px">Yes, use "${best.name}"</button>`+
+      `<button type="button" onclick="this.closest('.si-similar-banner').remove();" `+
+      `style="padding:3px 10px;border-radius:5px;border:1px solid #d1d5db;background:#fff;font-weight:600;cursor:pointer;font-size:12px">No, keep as typed</button>`;
+    row.appendChild(banner);
+  }
+}
+
+function siRemoveItemRow(idx){
+  const rows=document.querySelectorAll('.si-item-row');
+  if(rows.length<=1){showToast('At least one item is required','error');return;}
+  const row=document.querySelector(`.si-item-row[data-idx="${idx}"]`);
+  if(row)row.remove();
+}
+
+function siVegRowRecalc(idx){
+  const row=document.querySelector(`.si-item-row[data-idx="${idx}"]`);
+  if(!row)return;
+  const uom=row.querySelector('.si-row-uom')?.value||'kg';
+  const isBulk=BULK_VEG_UNITS.includes(uom.toLowerCase());
+  row.querySelectorAll(`.si-row-bulk-wrap-${idx}`).forEach(el=>el.style.display=isBulk?'':'none');
+  const qtyLbl=row.querySelector(`.si-row-qty-label-${idx}`);
+  const costLbl=row.querySelector(`.si-row-cost-label-${idx}`);
+  const kgperLbl=row.querySelector(`.si-row-kgper-label-${idx}`);
+  if(qtyLbl)qtyLbl.textContent=isBulk?`# ${uom}s *`:'Qty *';
+  if(costLbl)costLbl.textContent=isBulk?`Cost/${uom} (₱) *`:'Cost/kg (₱) *';
+  if(kgperLbl)kgperLbl.textContent=`kg/${uom} *`;
+  const qty=+row.querySelector('.si-row-qty')?.value||0;
+  const cost=+row.querySelector('.si-row-cost')?.value||0;
+  const totalCostEl=row.querySelector('.si-row-total-cost');
+  if(isBulk){
+    const kgPer=+row.querySelector('.si-row-kgper')?.value||0;
+    const totalKgEl=row.querySelector('.si-row-total-kg');
+    if(totalKgEl)totalKgEl.value=qty&&kgPer?fmtN(qty*kgPer):'';
+    if(totalCostEl)totalCostEl.value=qty&&cost?'₱'+fmtN(qty*cost):'';
+  } else {
+    if(totalCostEl)totalCostEl.value=qty&&cost?'₱'+fmtN(qty*cost):'';
+  }
+  siRecalcPurchaseTotal();
+}
+
+function siRecalcPurchaseTotal(){
+  let total=0;
+  document.querySelectorAll('.si-item-row').forEach(row=>{
+    const el=row.querySelector('.si-row-total-cost');
+    if(!el)return;
+    const v=(el.value||'').replace(/[₱,]/g,'');
+    total+=+v||0;
+  });
+  const wrap=document.getElementById('si-grand-total');
+  const val=document.getElementById('si-grand-total-val');
+  if(wrap)wrap.style.display=total?'flex':'none';
+  if(val)val.textContent='₱'+fmtN(total);
+}
+
+function siFruitRowRecalc(idx){
+  const row=document.querySelector(`.si-item-row[data-idx="${idx}"]`);
+  if(!row)return;
+  const numPkg=+row.querySelector('.si-row-num-pkg')?.value||0;
+  const kgPkg=+row.querySelector('.si-row-kg-pkg')?.value||0;
+  const costPkg=+row.querySelector('.si-row-cost-pkg')?.value||0;
+  const totalKgEl=row.querySelector('.si-row-total-kg');
+  const totalCostEl=row.querySelector('.si-row-total-cost');
+  if(totalKgEl)totalKgEl.value=numPkg&&kgPkg?fmtN(numPkg*kgPkg):'';
+  if(totalCostEl)totalCostEl.value=numPkg&&costPkg?'₱'+fmtN(numPkg*costPkg):'';
+  siRecalcPurchaseTotal();
+}
+
+function soAddItemRow(){
+  const container=document.getElementById('so-items-list');
+  if(!container)return;
+  const idx=window._siRowIdx=(window._siRowIdx||0)+1;
+  const productOpts=DB.products.map(p=>`<option value="${p.id}">${p.name} (${fmtN(getStockLevel(p.id))} kg)</option>`).join('');
+  const unitOpts=['kg','pc','box','tray','crate'].map(u=>`<option value="${u}"${u==='kg'?' selected':''}>${u}</option>`).join('');
+  const row=document.createElement('div');
+  row.className='so-item-row';
+  row.dataset.idx=idx;
+  row.style.cssText='border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--surface,#fff)';
+  row.innerHTML=`
+    <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
+      <div style="flex:3;min-width:160px">
+        <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Product *</label>
+        <select class="so-row-product" data-idx="${idx}" style="width:100%;padding:7px 8px;border:1px solid var(--border);border-radius:6px" onchange="soRowUpdatePrice(${idx})">${productOpts||'<option>-- No products --</option>'}</select>
+      </div>
+      <div style="flex:1;min-width:70px">
+        <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Qty *</label>
+        <input type="number" class="so-row-qty" data-idx="${idx}" min="0.01" step="0.01" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="soRowRecalc(${idx})">
+      </div>
+      <div style="flex:1;min-width:80px">
+        <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Unit *</label>
+        <select class="so-row-unit" data-idx="${idx}" style="width:100%;padding:7px 8px;border:1px solid var(--border);border-radius:6px" onchange="soRowUnitChange(${idx})">${unitOpts}</select>
+      </div>
+      <div class="so-row-kgunit-wrap" data-idx="${idx}" style="flex:1;min-width:90px;display:none">
+        <label class="so-row-kgunit-label" data-idx="${idx}" style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">kg per unit *</label>
+        <input type="number" class="so-row-kgunit" data-idx="${idx}" min="0.001" step="0.001" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="soRowRecalc(${idx})" placeholder="e.g. 1.5">
+      </div>
+      <div style="flex:1;min-width:90px">
+        <label class="so-row-price-label" data-idx="${idx}" style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Price/kg (₱) *</label>
+        <input type="number" class="so-row-price" data-idx="${idx}" min="0" step="0.01" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px" oninput="soRowRecalc(${idx})">
+      </div>
+      <div style="flex:1;min-width:80px">
+        <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Subtotal</label>
+        <input class="so-row-subtotal" data-idx="${idx}" readonly style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--gray-light,#f3f4f6);font-weight:700" placeholder="Auto">
+      </div>
+      <div>
+        <button type="button" onclick="soRemoveItemRow(${idx})" style="background:#fee2e2;border:none;border-radius:6px;padding:8px 10px;cursor:pointer;color:#dc2626;font-size:14px;line-height:1">🗑</button>
+      </div>
+    </div>`;
+  container.appendChild(row);
+  soRowUpdatePrice(idx);
+}
+
+function soRowUnitChange(idx){
+  const row=document.querySelector(`.so-item-row[data-idx="${idx}"]`);
+  if(!row)return;
+  const unit=row.querySelector('.so-row-unit')?.value||'kg';
+  const kgWrap=row.querySelector(`.so-row-kgunit-wrap[data-idx="${idx}"]`);
+  const priceLabel=row.querySelector(`.so-row-price-label[data-idx="${idx}"]`);
+  const kgLabel=row.querySelector(`.so-row-kgunit-label[data-idx="${idx}"]`);
+  const isKg=unit==='kg';
+  if(kgWrap)kgWrap.style.display=isKg?'none':'';
+  if(priceLabel)priceLabel.textContent=`Price/${unit} (₱) *`;
+  if(kgLabel)kgLabel.textContent=`kg per ${unit} *`;
+  soRowRecalc(idx);
+}
+
+function soRemoveItemRow(idx){
+  const rows=document.querySelectorAll('.so-item-row');
+  if(rows.length<=1){showToast('At least one item is required','error');return;}
+  const row=document.querySelector(`.so-item-row[data-idx="${idx}"]`);
+  if(row)row.remove();
+  soRecalcAll();
+}
+
+function soRowUpdatePrice(idx){
+  const row=document.querySelector(`.so-item-row[data-idx="${idx}"]`);
+  if(!row)return;
+  const pid=row.querySelector('.so-row-product')?.value;
+  const p=DB.products.find(x=>x.id===pid);
+  if(p&&p.sellPrice)row.querySelector('.so-row-price').value=p.sellPrice;
+  soRowRecalc(idx);
+}
+
+function soRowRecalc(idx){
+  const row=document.querySelector(`.so-item-row[data-idx="${idx}"]`);
+  if(!row)return;
+  const qty=+row.querySelector('.so-row-qty')?.value||0;
+  const price=+row.querySelector('.so-row-price')?.value||0;
+  const sub=row.querySelector('.so-row-subtotal');
+  if(sub)sub.value=qty&&price?'₱'+fmtN(qty*price):'';
+  soRecalcAll();
+}
+
+function soRecalcAll(){
+  let total=0;
+  document.querySelectorAll('.so-item-row').forEach(row=>{
+    const qty=+row.querySelector('.so-row-qty')?.value||0;
+    const price=+row.querySelector('.so-row-price')?.value||0;
+    total+=qty*price;
+  });
+
+  const ewt=total*0.01;
+  const ar=total-ewt;
+  if(document.getElementById('so-revenue'))document.getElementById('so-revenue').value=total?'₱'+fmtN(total):'';
+  if(document.getElementById('so-ewt'))document.getElementById('so-ewt').value=total?'₱'+fmtN(ewt):'';
+  if(document.getElementById('so-ar'))document.getElementById('so-ar').value=total?'₱'+fmtN(ar):'';
+}
+
 async function saveStockIn(type='vegetable'){
   const isFruit=type==='fruit';
-  const productTyped=(document.getElementById('si-product')?.value||'').trim();
-  if(!productTyped){showToast('Enter a product name','error');return;}
+  const rows=[...document.querySelectorAll('.si-item-row')];
+  if(!rows.length){showToast('Add at least one item','error');return;}
 
-  // Find existing product by name (case-insensitive), or auto-create it
-  const normalizedName=productTyped.toLowerCase().trim().replace(/\s+/g,' ');
-  // Match by name+type first, then name-only (covers mis-classified products)
-  let prod=DB.products.find(p=>p.name.toLowerCase().trim()===normalizedName&&p.type===type)
-         ||DB.products.find(p=>p.name.toLowerCase().trim()===normalizedName);
-  let isNewProduct=false;
-  if(!prod){
-    prod={id:genId(),name:productTyped,type,commodity:'',sellUnit:'kg',unit:'kg',reorderLevel:5,sellPrice:0,costPrice:0,shelfLife:null,preferredSupplier:null};
-    DB.products.push(prod);
-    isNewProduct=true;
-    showToast(`New product "${productTyped}" added to catalog`,'success');
-  } else if(prod.type!==type){
-    // Correct the type to match current entry
-    prod.type=type;
-    saveDB();
-    await gasPost({action:'update',sheet:'Products',data:prod});
-  }
-  const productId=prod.id;
   const supplierId=document.getElementById('si-supplier')?.value||'';
   const date=document.getElementById('si-date')?.value||today();
-  const expiry=null;
+  if(!date){showToast('Please enter a date','error');return;}
+  const paymentMethod=document.querySelector('input[name="si-payment-method"]:checked')?.value||'cash';
 
-  if(!productId){showToast('Could not resolve product','error');return;}
+  // Validate all rows and build entries
+  const entries=[];
+  for(const row of rows){
+    const productTyped=(row.querySelector('.si-row-product')?.value||'').trim();
+    if(!productTyped){showToast('Enter a product name for each item','error');return;}
+    const normalizedName=productTyped.toLowerCase().trim().replace(/\s+/g,' ');
+    let prod=DB.products.find(p=>p.name.toLowerCase().trim()===normalizedName&&p.type===type)
+           ||DB.products.find(p=>p.name.toLowerCase().trim()===normalizedName);
+    let isNewProduct=false;
+    if(!prod){
+      prod={id:genId(),name:productTyped,type,commodity:'',sellUnit:'kg',unit:'kg',reorderLevel:5,sellPrice:0,costPrice:0,shelfLife:null,preferredSupplier:null};
+      DB.products.push(prod);
+      isNewProduct=true;
+    } else if(prod.type!==type){
+      prod.type=type;
+      prod._typeUpdated=true;
+    }
 
-  let entry;
-  if(isFruit){
-    const sellMode=document.getElementById('si-sell-mode').value;
-    const packaging=document.getElementById('si-packaging').value;
-    const numPkg=+document.getElementById('si-num-pkg').value;
-    const costPerBulk=+document.getElementById('si-cost-pkg').value;
-    if(!numPkg||!costPerBulk){showToast('Enter number of packages and cost','error');return;}
-
-    if(sellMode==='kg'){
-      const kgPerBulk=+document.getElementById('si-kg-pkg').value;
-      if(!kgPerBulk){showToast('Enter kg per package','error');return;}
+    let entry;
+    if(isFruit){
+      const packaging=row.querySelector('.si-row-packaging')?.value||'';
+      const numPkg=+row.querySelector('.si-row-num-pkg')?.value;
+      const kgPerBulk=+row.querySelector('.si-row-kg-pkg')?.value;
+      const costPerBulk=+row.querySelector('.si-row-cost-pkg')?.value;
+      if(!numPkg||!costPerBulk){showToast('Fill in packages and cost for each item','error');return;}
+      if(!kgPerBulk){showToast('Enter kg per package for each item','error');return;}
       const totalKg=numPkg*kgPerBulk;
       const costPerUnit=costPerBulk/kgPerBulk;
       entry={
-        id:genId(), date, productId, supplierId, type:'fruit', sellMode:'kg',
+        id:genId(), date, productId:prod.id, supplierId, type:'fruit', sellMode:'kg',
         bulkUnit:packaging, bulkQty:numPkg, kgPerBulk, costPerBulk,
-        sellUnit:'kg',
-        qty:totalKg, costPerUnit, totalCost:numPkg*costPerBulk,
-        expiryDate:expiry, remainingQty:totalKg, staffUser:SESSION.username
+        sellUnit:'kg', qty:totalKg, costPerUnit, totalCost:numPkg*costPerBulk,
+        expiryDate:null, remainingQty:totalKg, staffUser:SESSION.username, paymentMethod
       };
-      // Update product's sell unit
-      if(prod) prod.sellUnit='kg';
+      prod.sellUnit='kg';
       logActivity('Stock IN (Fruit/kg)',`${prod.name}: ${fmtN(numPkg)} ${packaging} × ${fmtN(kgPerBulk)}kg = ${fmtN(totalKg)}kg @ ₱${fmtN(costPerUnit)}/kg`);
-
     } else {
-      // Per pack mode
-      const packsPerPkg=+document.getElementById('si-packs-per-pkg').value;
-      const packSizeG=+document.getElementById('si-pack-size-g').value||0;
-      if(!packsPerPkg){showToast('Enter packs per package','error');return;}
-      const totalPacks=numPkg*packsPerPkg;
-      const costPerUnit=costPerBulk/packsPerPkg;
+      const uom=row.querySelector('.si-row-uom')?.value||'kg';
+      const qty=+row.querySelector('.si-row-qty')?.value;
+      const costInput=+row.querySelector('.si-row-cost')?.value;
+      if(!qty||!costInput){showToast('Fill in quantity and cost for each item','error');return;}
+      const isBulkVeg=BULK_VEG_UNITS.includes(uom.toLowerCase());
+      let kgPerBulk=1,totalKg=qty,costPerUnit=costInput,totalCost=qty*costInput;
+      if(isBulkVeg){
+        kgPerBulk=+row.querySelector('.si-row-kgper')?.value||0;
+        if(!kgPerBulk){showToast(`Enter kg per ${uom} for each item`,'error');return;}
+        totalKg=qty*kgPerBulk; costPerUnit=costInput/kgPerBulk; totalCost=qty*costInput;
+      }
       entry={
-        id:genId(), date, productId, supplierId, type:'fruit', sellMode:'pack',
-        bulkUnit:packaging, bulkQty:numPkg, packsPerBulk:packsPerPkg, packSizeG, costPerBulk,
-        sellUnit:'pack',
-        qty:totalPacks, costPerUnit, totalCost:numPkg*costPerBulk,
-        expiryDate:expiry, remainingQty:totalPacks, staffUser:SESSION.username
+        id:genId(), date, productId:prod.id, supplierId, type:'vegetable',
+        bulkUnit:uom, bulkQty:qty, kgPerBulk, costPerBulk:costInput,
+        sellUnit:'kg', qty:totalKg, costPerUnit, totalCost,
+        expiryDate:null, remainingQty:totalKg, staffUser:SESSION.username, paymentMethod
       };
-      // Update product's sell unit
-      if(prod){ prod.sellUnit='pack'; prod.packSizeG=packSizeG; }
-      logActivity('Stock IN (Fruit/pack)',`${prod.name}: ${fmtN(numPkg)} ${packaging} × ${packsPerPkg} packs = ${fmtN(totalPacks)} packs @ ₱${fmtN(costPerUnit)}/pack`);
+      logActivity('Stock IN (Veg)',`${prod.name}: ${isBulkVeg?`${fmtN(qty)} ${uom} × ${fmtN(kgPerBulk)}kg = ${fmtN(totalKg)}kg @ ₱${fmtN(costPerUnit)}/kg`:`${fmtN(qty)} ${uom} @ ₱${fmtN(costPerUnit)}/kg`}`);
     }
-  } else {
-    const uom=document.getElementById('si-uom').value;
-    const qty=+document.getElementById('si-veg-qty').value;
-    const costInput=+document.getElementById('si-veg-cost-kg').value;
-    if(!qty||!costInput){showToast('Fill in quantity and cost','error');return;}
-    const isBulkVeg=BULK_VEG_UNITS.includes(uom.toLowerCase());
-    let kgPerBulk=1, totalKg=qty, costPerUnit=costInput, totalCost=qty*costInput;
-    if(isBulkVeg){
-      kgPerBulk=+document.getElementById('si-veg-kgper')?.value||0;
-      if(!kgPerBulk){showToast(`Enter kg per ${uom}`,'error');return;}
-      totalKg=qty*kgPerBulk;
-      costPerUnit=costInput/kgPerBulk;
-      totalCost=qty*costInput;
-    }
-    entry={
-      id:genId(), date, productId, supplierId, type:'vegetable',
-      bulkUnit:uom, bulkQty:qty, kgPerBulk, costPerBulk:costInput,
-      sellUnit:'kg',
-      qty:totalKg, costPerUnit, totalCost,
-      expiryDate:expiry, remainingQty:totalKg, staffUser:SESSION.username
-    };
-    logActivity('Stock IN (Veg)',`${productName(productId)}: ${isBulkVeg?`${fmtN(qty)} ${uom} × ${fmtN(kgPerBulk)}kg = ${fmtN(totalKg)}kg @ ₱${fmtN(costPerUnit)}/kg`:`${fmtN(qty)} ${uom} @ ₱${fmtN(costPerUnit)}/kg`}`);
+    entries.push({entry,prod,isNewProduct});
   }
 
-  // Capture payment method
-  const paymentMethod=document.querySelector('input[name="si-payment-method"]:checked')?.value||'cash';
-  entry.paymentMethod=paymentMethod;
-
-  DB.stockIn.push(entry);
-
-  // If credit → auto-create Accounts Payable entry
-  if(paymentMethod==='credit'){
-    if(!DB.accountsPayable) DB.accountsPayable=[];
-    const apEntry={
-      id:genId(),
-      date:entry.date,
-      supplierId:entry.supplierId,
-      item:prod.name,
-      description:prod.name,
-      qty:entry.bulkQty,
-      costPrice:entry.costPerBulk||entry.costPerUnit,
-      totalAmount:entry.totalCost,
-      status:'unpaid',
-      paidAmount:0,
-      paidDate:null,
-      paymentLogs:[],
-      staffUser:SESSION.username,
-      sourceStockInId:entry.id
-    };
-    DB.accountsPayable.push(apEntry);
-    await gasPost({action:'add',sheet:'AccountsPayable',data:apEntry});
-    logActivity('AP Auto-Created',`${prod.name} — ${fmt(entry.totalCost)} from Stock IN (Credit)`);
+  // ── Commit to local DB immediately ──
+  const gasQueue=[];
+  if(!DB.accountsPayable)DB.accountsPayable=[];
+  for(const {entry,prod,isNewProduct} of entries){
+    entry.productName=prod.name;
+    DB.stockIn.push(entry);
+    if(isNewProduct) gasQueue.push({action:'add',sheet:'Products',data:prod});
+    else if(prod._typeUpdated) gasQueue.push({action:'update',sheet:'Products',data:prod});
+    gasQueue.push({action:'add',sheet:'StockIn',data:entry});
+    if(paymentMethod==='credit'){
+      const apEntry={
+        id:genId(), date:entry.date, supplierId:entry.supplierId,
+        item:prod.name, description:prod.name, qty:entry.bulkQty,
+        costPrice:entry.costPerBulk||entry.costPerUnit, totalAmount:entry.totalCost,
+        status:'unpaid', paidAmount:0, paidDate:null, paymentLogs:[],
+        staffUser:SESSION.username, sourceStockInId:entry.id
+      };
+      DB.accountsPayable.push(apEntry);
+      gasQueue.push({action:'add',sheet:'AccountsPayable',data:apEntry});
+      logActivity('AP Auto-Created',`${prod.name} — ${fmt(entry.totalCost)} from Stock IN (Credit)`);
+    }
   }
+  saveDB(); // single local save
 
-  entry.productName=prod.name; // fallback display if product sync is delayed
-  saveDB();
-  if(isNewProduct) await gasPost({action:'add',sheet:'Products',data:prod});
-  await gasPost({action:'add',sheet:'StockIn',data:entry});
+  // ── Close UI instantly ──
   closeModal();
-  showToast(paymentMethod==='credit'?`Purchase saved ✓ — Added to Accounts Payable 🧾`:`Purchase saved ✓`,'success');
+  const count=entries.length;
+  showToast(paymentMethod==='credit'?`${count} item${count>1?'s':''} saved ✓ — Added to Accounts Payable 🧾`:`${count} item${count>1?'s':''} saved ✓`,'success');
   renderPage('stockin');
+
+  // ── Sync to GAS in background (parallel) ──
+  Promise.all(gasQueue.map(q=>gasPost(q))).catch(e=>console.warn('GAS sync:',e));
 }
 
 // ── STOCK IN EDIT ──
@@ -2901,16 +3087,9 @@ function openStockOutForm(){
         <div class="form-group"><label>PO Number</label><input id="so-po" placeholder="e.g. PO-0001"></div>
       </div>
 
-      <!-- Row 2: Product + Customer -->
-      <div class="form-grid form-grid-2" style="margin-bottom:12px">
-        <div class="form-group"><label>Product *</label><select id="so-product" onchange="soUpdatePrice()">${productOpts||'<option>-- No products --</option>'}</select></div>
+      <!-- Row 2: Customer + Payment + Delivery -->
+      <div class="form-grid form-grid-3" style="margin-bottom:12px">
         <div class="form-group"><label>Customer</label><select id="so-customer">${custOpts}</select></div>
-      </div>
-
-      <!-- Row 3: Qty + Price + Payment + Delivery -->
-      <div class="form-grid form-grid-2" style="margin-bottom:12px">
-        <div class="form-group"><label>Quantity *</label><input type="number" id="so-qty" min="0.01" step="0.01" oninput="soRecalc()"></div>
-        <div class="form-group"><label>Price per Unit (₱) *</label><input type="number" id="so-price" min="0" step="0.01" oninput="soRecalc()"></div>
         <div class="form-group"><label>Payment Type *</label>
           <select id="so-payment">
             <option value="cash">Cash</option>
@@ -2925,6 +3104,14 @@ function openStockOutForm(){
           </select>
         </div>
       </div>
+
+      <!-- Items -->
+      <hr class="divider">
+      <div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.5px">🧾 Items</span>
+        <button type="button" class="btn btn-secondary" style="padding:4px 14px;font-size:12px" onclick="soAddItemRow()">+ Add Item</button>
+      </div>
+      <div id="so-items-list"></div>
 
       <hr class="divider">
 
@@ -2950,7 +3137,8 @@ function openStockOutForm(){
       <button class="btn btn-primary" onclick="confirmStockOut()">Save Sale</button>
     </div>
   </div>`);
-  soUpdatePrice();
+  window._siRowIdx=(window._siRowIdx||0);
+  soAddItemRow();
 }
 
 function soUpdatePrice(){
@@ -2972,48 +3160,72 @@ function soRecalc(){
 }
 
 async function saveStockOut(){
-  const productId=document.getElementById('so-product').value;
-  const qty=+document.getElementById('so-qty').value;
-  const sellPrice=+document.getElementById('so-price').value;
-  const paymentType=document.getElementById('so-payment').value;
+  const rows=[...document.querySelectorAll('.so-item-row')];
+  if(!rows.length){showToast('Add at least one item','error');return;}
+
+  const date=document.getElementById('so-date').value;
+  const invoiceNumber=document.getElementById('so-invoice').value.trim();
+  const poNumber=document.getElementById('so-po').value.trim();
   const customerId=document.getElementById('so-customer').value;
-  if(!productId||!qty||!sellPrice){showToast('Fill in required fields','error');return;}
-  const stock=getStockLevel(productId);
-  if(qty>stock){showToast(`Not enough stock. Available: ${fmtN(stock)}`,'error');return;}
-  const {cogs}=calculateFifoCogs(productId,qty);
-  const affected=applyFifoDeduction(productId,qty);
-  const totalRevenue=qty*sellPrice;
-  const ewt=totalRevenue*0.01;
-  const accountsReceivable=totalRevenue-ewt;
-  const profit=totalRevenue-cogs;
-  const entry={
-    id:genId(), date:document.getElementById('so-date').value,
-    invoiceNumber:document.getElementById('so-invoice').value.trim(),
-    poNumber:document.getElementById('so-po').value.trim(),
-    productId, customerId, qty, sellPrice,
-    totalRevenue, ewt, accountsReceivable,
-    cogs, profit, paymentType,
-    deliveryStatus:document.getElementById('so-delivery').value,
-    staffUser:SESSION.username
-  };
-  DB.stockOut.push(entry);
-  // credit tracks accounts receivable (net of EWT)
+  const paymentType=document.getElementById('so-payment').value;
+  const deliveryStatus=document.getElementById('so-delivery').value;
+
+  // Validate all rows first (track pending deductions so same product in 2 rows doesn't bypass stock check)
+  const items=[];
+  const pendingQty={}; // productId → accumulated kg across rows
+  for(const row of rows){
+    const productId=row.querySelector('.so-row-product')?.value;
+    const qty=+row.querySelector('.so-row-qty')?.value;
+    const unit=row.querySelector('.so-row-unit')?.value||'kg';
+    const kgPerUnit=unit==='kg'?1:+row.querySelector('.so-row-kgunit')?.value;
+    const sellPrice=+row.querySelector('.so-row-price')?.value;
+    if(!productId||!qty||!sellPrice){showToast('Fill in product, quantity, and price for each item','error');return;}
+    if(unit!=='kg'&&!kgPerUnit){showToast(`Enter kg per ${unit} for ${productName(productId)}','error`);return;}
+    const kgEquiv=qty*kgPerUnit;
+    const available=getStockLevel(productId)-(pendingQty[productId]||0);
+    if(kgEquiv>available){showToast(`Not enough stock for ${productName(productId)}. Available: ${fmtN(available)} kg`,'error');return;}
+    pendingQty[productId]=(pendingQty[productId]||0)+kgEquiv;
+    items.push({productId,qty,unit,kgPerUnit,kgEquiv,sellPrice});
+  }
+
+  // ── Commit to local DB immediately ──
+  const gasQueue=[];
   let creditCust=null;
-  if(paymentType==='credit'&&customerId){
-    creditCust=DB.customers.find(c=>c.id===customerId);
-    if(creditCust) creditCust.balance=(+creditCust.balance||0)+accountsReceivable;
+  for(const {productId,qty,unit,kgPerUnit,kgEquiv,sellPrice} of items){
+    const {cogs}=calculateFifoCogs(productId,kgEquiv);
+    const affected=applyFifoDeduction(productId,kgEquiv);
+    const totalRevenue=qty*sellPrice;
+    const ewt=totalRevenue*0.01;
+    const accountsReceivable=totalRevenue-ewt;
+    const profit=totalRevenue-cogs;
+    const entry={
+      id:genId(), date, invoiceNumber, poNumber,
+      productId, customerId, qty, unit, kgPerUnit, kgEquiv, sellPrice,
+      totalRevenue, ewt, accountsReceivable,
+      cogs, profit, paymentType, deliveryStatus,
+      staffUser:SESSION.username
+    };
+    DB.stockOut.push(entry);
+    gasQueue.push({action:'add',sheet:'StockOut',data:entry});
+    // Queue FIFO batch updates
+    for(const b of affected) gasQueue.push({action:'update',sheet:'StockIn',data:{id:b.id,remainingQty:b.remainingQty}});
+    if(paymentType==='credit'&&customerId){
+      if(!creditCust)creditCust=DB.customers.find(c=>c.id===customerId);
+      if(creditCust)creditCust.balance=(+creditCust.balance||0)+accountsReceivable;
+    }
+    logActivity('Stock OUT',`${productName(productId)} x${qty}${unit!=='kg'?` ${unit} (${fmtN(kgEquiv)} kg)`:'kg'} @ ${fmt(sellPrice)}/${unit} | EWT: ${fmt(ewt)} | AR: ${fmt(accountsReceivable)}`);
   }
-  saveDB();
-  logActivity('Stock OUT',`${productName(productId)} x${qty} @ ${fmt(sellPrice)} | EWT: ${fmt(ewt)} | AR: ${fmt(accountsReceivable)}`);
-  await gasPost({action:'add',sheet:'StockOut',data:entry});
-  for(const b of affected){
-    await gasPost({action:'update',sheet:'StockIn',data:{id:b.id,remainingQty:b.remainingQty}});
-  }
-  // Push updated customer balance to GAS for credit sales
-  if(creditCust) await gasPost({action:'updateBalance',sheet:'Customers',data:{id:creditCust.id,balance:creditCust.balance}});
+  if(creditCust) gasQueue.push({action:'updateBalance',sheet:'Customers',data:{id:creditCust.id,balance:creditCust.balance}});
+  saveDB(); // single local save
+
+  // ── Close UI instantly ──
   closeModal();
-  showToast('Sale recorded','success');
+  const count=items.length;
+  showToast(`${count} item${count>1?'s':''} recorded ✓`,'success');
   renderPage('stockout');
+
+  // ── Sync to GAS in background (parallel) ──
+  Promise.all(gasQueue.map(q=>gasPost(q))).catch(e=>console.warn('GAS sync:',e));
 }
 
 // ── OTP store (in-memory only, never saved to localStorage) ──
@@ -6820,33 +7032,39 @@ async function clearAllData(){
   if(!confirm('⚠ This will DELETE ALL DATA locally and from Google Sheets. Are you sure?'))return;
   if(!confirm('This CANNOT be undone. Confirm final delete?'))return;
 
-  showToast('Clearing data from Google Sheets…','warning');
+  // Stop the 60s background sync from pulling rows back into the local DB mid-clear
+  SYNC_PAUSED=true;
+  SYNC_GEN++;
+  try{
+    // Assets/Loans have no Google Sheet tab (they're local-only), so they're just wiped below
+    const sheets=['StockIn','StockOut','Products','Suppliers','Customers','Spoilage','Expenses','Payments','AccountsPayable'];
 
-  // Collect all records per sheet before wiping local DB
-  const toDelete=[
-    ...( DB.stockIn||[]).map(r=>({sheet:'StockIn',id:r.id})),
-    ...( DB.stockOut||[]).map(r=>({sheet:'StockOut',id:r.id})),
-    ...( DB.products||[]).map(r=>({sheet:'Products',id:r.id})),
-    ...( DB.suppliers||[]).map(r=>({sheet:'Suppliers',id:r.id})),
-    ...( DB.customers||[]).map(r=>({sheet:'Customers',id:r.id})),
-    ...( DB.spoilage||[]).map(r=>({sheet:'Spoilage',id:r.id})),
-    ...( DB.expenses||[]).map(r=>({sheet:'Expenses',id:r.id})),
-    ...( DB.payments||[]).map(r=>({sheet:'Payments',id:r.id})),
-    ...( DB.accountsPayable||[]).map(r=>({sheet:'AccountsPayable',id:r.id})),
-    ...( DB.assets||[]).map(r=>({sheet:'Assets',id:r.id})),
-    ...( DB.loans||[]).map(r=>({sheet:'Loans',id:r.id})),
-  ];
+    for(let i=0;i<sheets.length;i++){
+      showToast(`Clearing Google Sheets… (${i+1}/${sheets.length}: ${sheets[i]})`,'warning');
+      const ok=await gasPost({action:'clearSheet',sheet:sheets[i],data:{}});
+      if(!ok){
+        showToast(`❌ Could not clear "${sheets[i]}" in Google Sheets. Nothing was wiped locally — check your connection and try again.`,'error');
+        return;
+      }
+    }
 
-  for(const rec of toDelete){
-    await gasPost({action:'delete',sheet:rec.sheet,data:{id:rec.id}});
+    // Older Apps Script deployments ignore unknown actions but still reply ok, so confirm the sheets are really empty
+    const remote=await gasGet();
+    const leftover=remote?sheets.filter(s=>Array.isArray(remote[s])&&remote[s].length):sheets;
+    if(leftover.length){
+      showToast(`❌ Google Sheets still has data in: ${leftover.join(', ')}. Update the Apps Script (Setup → Google Apps Script Code), redeploy it as a new version, then try again. Local data was NOT cleared.`,'error');
+      return;
+    }
+
+    // Wipe local DB (keep settings)
+    localStorage.removeItem(DB_KEY);
+    DB={products:[],suppliers:[],customers:[],stockIn:[],stockOut:[],spoilage:[],expenses:[],payments:[],accountsPayable:[],assets:[],loans:[],activityLog:[],settings:{gasUrl:DB.settings.gasUrl,shopName:DB.settings.shopName,apiKey:DB.settings.apiKey,users:DB.settings.users,pendingUsers:DB.settings.pendingUsers}};
+    saveDB();
+    showToast('All data cleared ✓','success');
+    renderPage(currentPage);
+  }finally{
+    SYNC_PAUSED=false;
   }
-
-  // Wipe local DB (keep settings)
-  localStorage.removeItem(DB_KEY);
-  DB={products:[],suppliers:[],customers:[],stockIn:[],stockOut:[],spoilage:[],expenses:[],payments:[],accountsPayable:[],assets:[],loans:[],activityLog:[],settings:{gasUrl:DB.settings.gasUrl,shopName:DB.settings.shopName,apiKey:DB.settings.apiKey,users:DB.settings.users,pendingUsers:DB.settings.pendingUsers}};
-  saveDB();
-  showToast('All data cleared ✓','success');
-  renderPage(currentPage);
 }
 
 /* ========== USER MANAGEMENT ========== */
@@ -7148,6 +7366,11 @@ function doPost(e) {
       for (let i = 1; i < allData.length; i++) {
         if (String(allData[i][0]) === String(data.id)) { sh.deleteRow(i+1); break; }
       }
+    } else if (action === 'clearSheet') {
+      // Wipes every data row (keeps the header). Users/settings sheets are protected.
+      if (sheet === 'Settings' || sheet === 'PendingUsers') throw new Error('Sheet cannot be cleared');
+      const lastRow = sh.getLastRow();
+      if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
     } else if (action === 'saveSettings') {
       const settingsSheet = getOrCreateSheet(ss, 'Settings');
       const rows = settingsSheet.getDataRange().getValues();
